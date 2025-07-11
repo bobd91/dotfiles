@@ -48,6 +48,9 @@ bindsym $mode+Shift+Delete exec --no-startup-id pactl set-source-mute @DEFAULT_S
 
 default_border pixel
 hide_edge_borders both
+smart_gaps on
+gaps inner 2
+gaps outer -2
 
 # Use Mouse+$mod to drag floating windows to their wanted position
 floating_modifier $mod
@@ -195,7 +198,7 @@ mode "resize" {
 bindsym $mod+r mode "resize"
 
 bar {
-    font pango:MesloLGL Nerd Font Mono, Font Awesome 6 Free
+    font pango:MesloLGM Nerd Font Mono, Font Awesome 6 Free
     status_command i3status-rs ~/.config/i3status-rust/config.toml
     colors {
         separator #666666
