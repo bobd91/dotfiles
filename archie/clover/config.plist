@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Boot</key>
+	<dict>
+		<key>DefaultVolume</key>
+		<string>LastBootedVolume</string>
+		<key>Timeout</key>
+		<integer>5</integer>
+	</dict>
+	<key>GUI</key>
+	<dict>
+		<key>Theme</key>
+		<string>Catalina</string>
+		<key>scan</key>
+		<false/>
+		<key>Custom</key>
+		<dict>
+			<key>Entries</key>
+			<array>
+				<dict>
+					<key>Disabled</key>
+					<false/>
+					<key>Path</key>
+					<string>\EFI\Microsoft\Boot\bootmgfw.efi</string>
+					<key>Title</key>
+					<string>Windows</string>
+					<key>Type</key>
+					<string>Windows</string>
+					<key>VolumeType</key>
+					<string>Internal</string>
+				</dict>
+				<dict>
+					<key>Disabled</key>
+					<false/>
+					<key>Image</key>
+					<string>icons\os_arch.icns</string>
+					<key>Title</key>
+					<string>Arch Linux</string>
+					<key>Path</key>
+					<string>\boot\arch\vmlinuz-linux</string>
+					<key>Arguments</key>
+					<string>initrd=\boot\arch\amd-ucode.img initrd=\boot\arch\initramfs-linux.img root=UUID=69de518f-a25d-4e84-82fb-15adafc40108 rw add_efi_memmap</string>
+					<key>Type</key>
+					<string>Linux</string>
+					<key>VolumeType</key>
+					<string>Internal</string>
+					<key>SubEntries</key>
+					<array>
+						<dict>
+						</dict>
+						<dict>
+							<key>Arguments</key>
+							<string>initrd=\boot\arch\amd-ucode.img initrd=\boot\arch\initramfs-linux-fallback.img root=UUID=69de518f-a25d-4e84-82fb-15adafc40108 rw add_efi_memmap</string>
+							<key>Title</key>
+							<string>Arch Linux Rescue</string>
+						</dict>
+					</array>
+				</dict>
+				<dict>
+					<key>Disabled</key>
+					<false/>
+					<key>Hidden</key>
+					<true/>
+					<key>Image</key>
+					<string>icons\os_grub.icns</string>
+					<key>Path</key>
+					<string>\EFI\GRUB\grubx64.efi</string>
+					<key>Title</key>
+					<string>Grub</string>
+					<key>Type</key>
+					<string>Linux</string>
+					<key>VolumeType</key>
+					<string>Internal</string>
+				</dict>
+			</array>
+			<key>Tool</key>
+			<array>
+				<dict>
+					<key>Disabled</key>
+					<false/>
+					<key>Hidden</key>
+					<false/>
+					<key>Hotkey</key>
+					<string>S</string>
+					<key>Title</key>
+					<string>EFI Shell</string>
+					<key>FullTitle</key>
+					<string>EFI Shell</string>
+					<key>Path</key>
+					<string>\EFI\Shell\Shell.efi</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
+</dict>
+</plist>
