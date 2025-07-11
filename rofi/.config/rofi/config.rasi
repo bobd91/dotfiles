@@ -1,7 +1,7 @@
 configuration {
 	modes: "drun,window";
 	show-icons: true;
-	terminal: "xfce-terminal";
+	terminal: "~/.config/defaults/terminal";
 	drun-display-format: "{icon} {name}";
 	location: 0;
 	disable-history: false;
