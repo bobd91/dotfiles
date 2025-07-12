@@ -1,0 +1,38 @@
+diff --git a/lib/Stow.pm.in b/lib/Stow.pm.in
+index 2bbaf46..469acbd 100755
+--- a/lib/Stow.pm.in
++++ b/lib/Stow.pm.in
+@@ -500,20 +500,6 @@ sub stow_node {
+     # valid directory, and can read its contents to iterate over them.
+     my $pkg_path_from_cwd = join_paths($stow_path, $package, $pkg_subpath);
+ 
+-    # Don't try to stow absolute symlinks (they can't be unstowed)
+-    if (-l $pkg_path_from_cwd) {
+-        my $link_dest = $self->read_a_link($pkg_path_from_cwd);
+-        if ($link_dest =~ m{\A/}) {
+-            $self->conflict(
+-                'stow',
+-                $package,
+-                "source is an absolute symlink $pkg_path_from_cwd => $link_dest"
+-            );
+-            debug(3, 0, "Absolute symlinks cannot be unstowed");
+-            return;
+-        }
+-    }
+-
+     # How many directories deep are we?
+     my $level = ($pkg_subpath =~ tr,/,,);
+     debug(2, 1, "level of $pkg_subpath is $level");
+@@ -909,11 +895,6 @@ sub unstow_link_node {
+         error("Could not read link: $target_subpath");
+     }
+ 
+-    if ($link_dest =~ m{\A/}) {
+-        warn "Ignoring an absolute symlink: $target_subpath => $link_dest\n";
+-        return;
+-    }
+-
+     # Does it point to a node under any stow directory?
+     my ($existing_pkg_path_from_cwd, $existing_stow_path, $existing_package) =
+         $self->find_stowed_path($target_subpath, $link_dest);
+
