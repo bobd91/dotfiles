@@ -36,7 +36,7 @@ format_alt = " $icon_swap $swap_used_percents.eng(w:2) "
 
 [[block]]
 block = "net"
-format = " $icon $ssid $signal_strength "
+format = " $icon $ssid[$signal_strength] "
 [[block.click]]
 button = "left"
 cmd = "nm-connection-editor"
