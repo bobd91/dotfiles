@@ -24,8 +24,8 @@ PMT_PROMPT='\[\033[1;37m\]\$'
 PMT_CLEAR='\[\033[00m\]'
 PS1="${PMT_USER_HOST} ${PMT_PWD} ${PMT_GIT_BRANCH}\n${PMT_PROMPT}${PMT_CLEAR} "
 
-# Created by `pipx` on 2025-06-24 15:05:34
-export PATH="$PATH:/home/bob/.local/bin"
+[[ ":$PATH:" != *":/home/bob/.local/bin:"* ]] && PATH="${PATH}:/home/bob/.local/bin"
+export PATH
 
 eval "$(fzf --bash)"
 . /usr/share/git/git-prompt.sh
