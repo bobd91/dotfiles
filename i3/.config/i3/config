@@ -63,7 +63,7 @@ tiling_drag modifier titlebar
 bindsym $mod+Return exec terminal
 
 # start a browser
-bindsym $mod+b exec browser
+bindsym $mod+b exec --no-startup-id browser
 
 # kill focused window
 bindsym $mod+Shift+q kill

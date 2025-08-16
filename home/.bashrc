@@ -30,3 +30,6 @@ export PATH
 eval "$(fzf --bash)"
 . /usr/share/git/git-prompt.sh
 
+export CDPATH=".:~:~/jsonn"
+
+shopt -s globstar
