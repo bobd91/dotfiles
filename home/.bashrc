@@ -2,6 +2,10 @@
 # ~/.bashrc
 #
 
+# For LFS
+export LFS=/mnt/lfs
+umask 022
+
 # If not running interactively, don't do anything
 [[ $- != *i* ]] && return
 
@@ -13,6 +17,8 @@ export XDG_CACHE_HOME="$HOME/.cache"
 export XDG_CONFIG_HOME="$HOME/.config"
 export XDG_DATA_HOME="$HOME/.local/share"
 export XDG_STATE_HOME="$HOME/.local/state"
+
+#source ~/.bash_colour
 
 alias ls='ls --color=auto'
 alias grep='grep --color=auto'
@@ -29,7 +35,5 @@ export PATH
 
 eval "$(fzf --bash)"
 . /usr/share/git/git-prompt.sh
-
-export CDPATH=".:~:~/jsonn"
 
 shopt -s globstar

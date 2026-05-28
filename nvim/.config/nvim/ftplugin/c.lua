@@ -1,4 +1,4 @@
-vim.opt_local.makeprg = "gcc -ggdb -o gen_state gen_state.c -Wall"
+vim.opt_local.makeprg = "gcc -ggdb -o %:p:r %:p"
 vim.keymap.set('n', '<leader>m', ':wa<CR>:make<CR>:copen<CR>')
 vim.keymap.set('n', '<leader>n', ':cnext<CR>')
 vim.keymap.set('n', '<leader>c', ':cclose<CR>')
