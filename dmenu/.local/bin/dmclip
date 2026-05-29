@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+
+dmclipdir="$HOME/.cache/dmclip"
+placeholder="<NL>"
+
+addclip() {
+        local clip=$1
+        [[ $clip ]] || return
+        [[ -d "$dmclipdir" ]] || mkdir -p "$dmclipdir"
+        awk -i inplace -v clip="$clip" \
+                '$0==clip{next}{print}ENDFILE{print clip}' "$histfile"
+}
+
+chooseclip() {
+        tac "$histfile" | menu "$histprompt:"
+}
+
+setsel() {
+        local selection=$1
+        [[ $selection ]] || return
+        echo -n "$selection" | 
+                sed "s/$placeholder/\n/g" | 
+                xclip -i -selection primary
+}
+
+getsel() {
+        local clip=$(xclip -o -f -selection primary 2>/dev/null)
+        [[ $clip ]] || return
+        echo "$clip" | sed ':a;N;$!ba;s/\n/'"$placeholder"'/g'
+}
+
+pastesel() {
+        local thiswin="$(xdotool getactivewindow)"
+        local mousewin="$(xdotool getmouselocation --shell | awk -F = '/WINDOW/{print $2}')"
+        [[ $thiswin == $mousewin ]] || return 1
+        xdotool click 2
+}
+
+copy() {
+        addclip "${ getsel; }"
+}
+
+paste() {
+        local clip="${ chooseclip; }"
+        [[ $clip ]] || return
+        # place chosen clip at end of history
+        addclip "$clip" && setsel "$clip" && pastesel
+}
+
+remove() {
+        sed -i "/^$1$/Id" "$histfile"
+}
+
+menu() {
+        local p=${1:-'Select:'}
+        local windowid="$(xdotool getactivewindow)"
+        local geom="$(xdotool getwindowgeometry --shell --prefix=dmclip_ $windowid)"
+        local nf='#eff1f5'
+        local nb='#4c4f69'
+        local sb='#04a5e5'
+        local fn='monospace:14'
+        local l=6
+        local bw=2
+        local x y z
+        local dmclip_WINDOW dmclip_X dmclip_Y dmclip_WIDTH dmclip_HEIGHT dmclip_SCREEN
+        eval "$geom"
+        (( x=dmclip_X+bw ))
+        (( y=dmclip_Y+bw+(dmclip_HEIGHT-dmclip_Y)/2 ))
+        (( z=dmclip_WIDTH-(bw*2) ))
+
+        dmenu -i -x $x -y $y -z $z -l $l -fn $fn -nf $nf -nb $nb -sb $sb -p $p -bw $bw 
+}
+
+
+
+if (( $# > 1 )); then
+        histprompt="${@: -1}"
+        histfile="$dmclipdir/${histprompt,,}"
+else
+        histprompt='Clipboard'
+        histfile="$dmclipdir/clipboard"
+fi
+
+case "$1" in
+        copy) copy ;;
+        paste) paste ;;
+        get) chooseclip ;; 
+        remove) remove "$2" ;;
+        *) echo "Usage: ${0##*/} (copy|paste|remove <regex>|get) [history file=Clipboard]" 
+esac
+
+
