@@ -3,8 +3,10 @@ For packages that do not live under the user home directory
 
 Some will need 'sudo stow ...' to install/remove 
 
-keyd   - key mapping, config has to be in /etc/keyd
+keyd  - /etc/keyd config
 local - /usr/local/bin default terminal/browser/vi links
+x11   - /etc/X11/xorg.conf.d/00-keyboard.conf for gb keyboard
+alsa  - /etc/modprobe.d/alsa_base.conf for usb audio as default
 
 -------
 
