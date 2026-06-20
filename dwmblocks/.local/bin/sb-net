@@ -1,0 +1,29 @@
+#!/bin/bash
+
+TERMINAL=${TERMINAL:-st}
+
+if [[ $BUTTON ]]; then
+	case $BUTTON in
+		1) nm-connection-editor; pkill -SIGRTMIN+4 dwmblocks ;;
+		3) setsid -f "$TERMINAL" -e "$EDITOR" "$0" ;;
+	esac
+	exit
+fi
+
+# Wifi
+wifi=( $(tail -n +3 /proc/net/wireless | awk '{print $1, $3}') )
+if (( ${#wifi[@]} )); then
+	wdev=${wifi[0]}
+	wdev=${wdev%:*}
+	wsig=${wifi[1]}
+	(( wsig=${wsig%\.*} * 100 / 70 ))
+	wssid="$(nmcli -c no -g name,device c show | awk -F : "/$wdev/{print \$1}")"
+	wifi_txt="$wssid[${wsig}%]"
+else
+	wifi_txt="No WiFi"
+fi
+
+# Ethernet
+[[ "$(cat /sys/class/net/e*/operstate 2>/dev/null)" =~ 'up' ]] && ether_txt=' '
+
+printf "%s%s\n" " $wifi_txt" "$ether_txt"

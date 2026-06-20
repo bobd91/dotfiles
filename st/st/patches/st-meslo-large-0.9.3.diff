@@ -1,0 +1,11 @@
+--- config.def.h.orig	2026-06-19 19:29:35.150642174 +0100
++++ config.def.h	2026-06-19 19:29:56.904710928 +0100
+@@ -5,7 +5,7 @@
+  *
+  * font: see http://freedesktop.org/software/fontconfig/fontconfig-user.html
+  */
+-static char *font = "Liberation Mono:pixelsize=12:antialias=true:autohint=true";
++static char *font = "MesloLGS Nerd Font Mono:style=Regular:pixelsize=20:antialias=true:autohint=true";
+ static int borderpx = 2;
+ 
+ /*

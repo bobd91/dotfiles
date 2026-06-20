@@ -1,0 +1,45 @@
+#!/bin/bash
+
+# Prints the current volume or  if muted.
+spkr=''
+muted=''
+
+TERMINAL=${TERMINAL:-st}
+
+if [[ $BUTTON ]]; then
+	case $BUTTON in
+		1) pavucontrol -t 3; pkill -SIGRTMIN+10 "${STATUSBAR:-dwmblocks}" ;;
+		2) wpctl set-mute @DEFAULT_SINK@ toggle ;;
+		3) setsid -f "$TERMINAL" -e "$EDITOR" "$0" ;;
+	esac
+	exit
+fi
+
+print_volume() {
+	local vol wpstat
+	vol="$(wpctl get-volume @DEFAULT_SINK@)"
+
+	case "$vol" in
+	*\[MUTED\]* )
+		echo "$muted"
+		;;
+
+	"Volume: 1.00" ) 
+		# may be dummy output or no selected device (no '*') on startup
+		# need to wait for real value as volume does not refresh
+		wpstat="$(wpctl status | sed '/\*.*vol: 1.00/!'d)"
+		while [[ -z $wpstat || $wpstat =~ 'Dummy Output' ]]; do
+			sleep 0.1
+			wpstat="$(wpctl status | sed '/\*.*vol: 1.00/!'d)"
+		done
+		print_volume
+		;;
+
+	Volume:* )
+		vol="${vol#*\.}"
+		echo "$spkr $vol%"
+		;;
+	esac
+}
+
+print_volume

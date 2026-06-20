@@ -1,0 +1,10 @@
+--- Makefile.orig	2026-06-20 19:46:49.389369531 +0100
++++ Makefile	2026-06-20 19:46:38.317713368 +0100
+@@ -1,6 +1,6 @@
+ PREFIX  := /usr/local
+ CC      := cc
+-CFLAGS  := -pedantic -Wall -Wno-deprecated-declarations -Os
++CFLAGS  := -std=gnu17 -pedantic -Wall -Wno-deprecated-declarations -Os
+ LDFLAGS := -lX11
+ 
+ # FreeBSD (uncomment)

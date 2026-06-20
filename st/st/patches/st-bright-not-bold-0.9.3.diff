@@ -1,0 +1,4 @@
+1283c1283
+< 				font = &dc.bfont;
+---
+> 				font = &dc.font;
