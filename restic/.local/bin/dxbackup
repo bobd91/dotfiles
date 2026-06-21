@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+
+set -e
+
+_fail() {
+         >&2 echo "$@"
+         exit 1
+}
+
+[[ "$#" -eq 2 ]] || _fail Usage: $(basename "$0") \<passwd file\> \<dir\>
+[[ -f "$1" ]] || _fail "$1" is not a regular file
+[[ -d "$2" ]] || _fail "$2" is not a directory
+
+restic -r rclone:Dropbox:info -p "$1" backup "$2" --skip-if-unchanged
