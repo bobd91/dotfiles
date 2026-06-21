@@ -1,7 +1,5 @@
-diff --git a/config.def.h b/config.def.h
-index 1edb647..dd3eb31 100644
---- a/config.def.h
-+++ b/config.def.h
+--- config.def.h.orig	2026-06-21 21:01:58.527740432 +0100
++++ config.def.h	2026-06-21 21:11:49.910818163 +0100
 @@ -21,3 +21,6 @@ static unsigned int lines      = 0;
   * for example: " /?\"&[]"
   */
@@ -9,11 +7,9 @@ index 1edb647..dd3eb31 100644
 +
 +/* Size of the window border */
 +static unsigned int border_width = 0;
-diff --git a/dmenu.c b/dmenu.c
-index 27b7a30..7c130fc 100644
---- a/dmenu.c
-+++ b/dmenu.c
-@@ -684,9 +684,11 @@ setup(void)
+--- dmenu.c.orig	2026-06-21 21:02:13.527704843 +0100
++++ dmenu.c	2026-06-21 21:06:01.502929437 +0100
+@@ -684,9 +684,12 @@ setup(void)
  	swa.override_redirect = True;
  	swa.background_pixel = scheme[SchemeNorm][ColBg].pixel;
  	swa.event_mask = ExposureMask | KeyPressMask | VisibilityChangeMask;
@@ -23,14 +19,16 @@ index 27b7a30..7c130fc 100644
  	                    CWOverrideRedirect | CWBackPixel | CWEventMask, &swa);
 +	if (border_width)
 +		XSetWindowBorder(dpy, win, scheme[SchemeSel][ColBg].pixel);
++
  	XSetClassHint(dpy, win, &ch);
-
-
-@@ -757,6 +759,8 @@ main(int argc, char *argv[])
- 			colors[SchemeSel][ColFg] = argv[++i];
+ 
+ 	/* input methods */
+@@ -761,6 +764,8 @@ main(int argc, char *argv[])
+ 			colors[SchemeOut][ColFg] = argv[++i];
  		else if (!strcmp(argv[i], "-w"))   /* embedding window id */
  			embed = argv[++i];
 +		else if (!strcmp(argv[i], "-bw"))
 +			border_width = atoi(argv[++i]); /* border width */
  		else
  			usage();
+ 

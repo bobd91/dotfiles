@@ -58,7 +58,7 @@ menu() {
         local nf='#eff1f5'
         local nb='#4c4f69'
         local sb='#04a5e5'
-        local fn='monospace:14'
+	local fn="MesloLGS Nerd Font Mono:size=16"
         local l=6
         local bw=2
         local x y z
@@ -68,7 +68,7 @@ menu() {
         (( y=dmclip_Y+bw+(dmclip_HEIGHT-dmclip_Y)/2 ))
         (( z=dmclip_WIDTH-(bw*2) ))
 
-        dmenu -i -x $x -y $y -z $z -l $l -fn $fn -nf $nf -nb $nb -sb $sb -p $p -bw $bw 
+        dmenu -i -x $x -y $y -z $z -l $l -fn "$fn" -nf $nf -nb $nb -sb $sb -p $p -bw $bw 
 }
 
 

@@ -6,6 +6,9 @@ muted=''
 
 TERMINAL=${TERMINAL:-st}
 
+vol_cmd="wpctl get-volume @DEFAULT_SINK@"
+stat_cmd="wpctl status"
+
 if [[ $BUTTON ]]; then
 	case $BUTTON in
 		1) pavucontrol -t 3; pkill -SIGRTMIN+10 "${STATUSBAR:-dwmblocks}" ;;
@@ -16,30 +19,25 @@ if [[ $BUTTON ]]; then
 fi
 
 print_volume() {
-	local vol wpstat
-	vol="$(wpctl get-volume @DEFAULT_SINK@)"
+	local vol="$($vol_cmd)"
+	local wpstat
 
-	case "$vol" in
-	*\[MUTED\]* )
-		echo "$muted"
-		;;
-
-	"Volume: 1.00" ) 
+	if [[ $vol =~ 'Volume: 1.00' ]]; then
+		# may be actual 100% but ...
 		# may be dummy output or no selected device (no '*') on startup
-		# need to wait for real value as volume does not refresh
-		wpstat="$(wpctl status | sed '/\*.*vol: 1.00/!'d)"
+		# so check status for selected device that is not Dummy Output
+		wpstat="$($stat_cmd | sed '/\*.*vol: 1.00/!'d)"
 		while [[ -z $wpstat || $wpstat =~ 'Dummy Output' ]]; do
+			vol=""
 			sleep 0.1
-			wpstat="$(wpctl status | sed '/\*.*vol: 1.00/!'d)"
+			wpstat="$($stat_cmd | sed '/\*.*vol: 1.00/!'d)"
 		done
-		print_volume
-		;;
+		[[ $vol ]] || vol="$($vol_cmd)"
+	fi
 
-	Volume:* )
-		vol="${vol#*\.}"
-		echo "$spkr $vol%"
-		;;
-	esac
+	[[ $vol =~ '[MUTED]' ]] && echo "$muted" && return
+	[[ $vol =~ 'Volume: 1.00' ]] && echo "$spkr 100%" && return
+	echo "$spkr ${vol#*\.}%"
 }
 
 print_volume
