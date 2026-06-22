@@ -10,7 +10,7 @@ vim.opt.sidescrolloff = 8                          -- Keep 8 columns left/right 
 vim.opt.tabstop = 8                                -- Tab width
 vim.opt.shiftwidth = 8                             -- Indent width
 vim.opt.softtabstop = 8                            -- Soft tab stop
-vim.opt.expandtab = true                           -- Use spaces instead of tabs
+vim.opt.expandtab = false                          -- Use spaces instead of tabs
 vim.opt.smartindent = true                         -- Smart auto-indenting
 vim.opt.autoindent = true                          -- Copy indent from current line
 
