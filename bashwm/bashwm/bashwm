@@ -1,0 +1,453 @@
+#!/usr/bin/env bash
+LC_CTYPE=C
+
+X_EVENT_MASK_NO_EVENT=0
+X_EVENT_MASK_KEY_PRESS=1
+X_EVENT_MASK_KEY_RELEASE=2
+X_EVENT_MASK_BUTTON_PRESS=4
+X_EVENT_MASK_BUTTON_RELEASE=8
+X_EVENT_MASK_ENTER_WINDOW=16
+X_EVENT_MASK_LEAVE_WINDOW=32
+X_EVENT_MASK_POINTER_MOTION=64
+X_EVENT_MASK_POINTER_MOTION_HINT=128
+X_EVENT_MASK_BUTTON_1_MOTION=256
+X_EVENT_MASK_BUTTON_2_MOTION=512
+X_EVENT_MASK_BUTTON_3_MOTION=1024
+X_EVENT_MASK_BUTTON_4_MOTION=2048
+X_EVENT_MASK_BUTTON_5_MOTION=4096
+X_EVENT_MASK_BUTTON_MOTION=8192
+X_EVENT_MASK_KEYMAP_STATE=16384
+X_EVENT_MASK_EXPOSURE=32768
+X_EVENT_MASK_VISIBILITY_CHANGE=65536
+X_EVENT_MASK_STRUCTURE_NOTIFY=131072
+X_EVENT_MASK_RESIZE_REDIRECT=262144
+X_EVENT_MASK_SUBSTRUCTURE_NOTIFY=524288
+X_EVENT_MASK_SUBSTRUCTURE_REDIRECT=1048576
+X_EVENT_MASK_FOCUS_CHANGE=2097152
+X_EVENT_MASK_PROPERTY_CHANGE=4194304
+X_EVENT_MASK_COLOR_MAP_CHANGE=8388608
+X_EVENT_MASK_OWNER_GRAB_BUTTON=16777216
+
+X_CW_BACK_PIXMAP=1
+X_CW_BACK_PIXEL=2
+X_CW_BORDER_PIXMAP=4
+X_CW_BORDER_PIXEL=8
+X_CW_BIT_GRAVITY=16
+X_CW_WIN_GRAVITY=32
+X_CW_BACKING_STORE=64
+X_CW_BACKING_PLANES=128
+X_CW_BACKING_PIXEL=256
+X_CW_OVERRIDE_REDIRECT=512
+X_CW_SAVE_UNDER=1024
+X_CW_EVENT_MASK=2048
+X_CW_DONT_PROPAGATE=4096
+X_CW_COLORMAP=8192
+X_CW_CURSOR=16384
+
+X_ERROR=0
+X_REPLY=1
+X_KEY_PRESS=2
+X_KEY_RELEASE=3
+X_BUTTON_PRESS=4
+X_BUTTON_RELEASE=5
+X_MOTION_NOTIFY=6
+X_ENTER_NOTIFY=7
+X_LEAVE_NOTIFY=8
+X_FOCUS_IN=9
+X_FOCUS_OUT=10
+X_KEYMAP_NOTIFY=11
+X_EXPOSE=12
+X_GRAPHICS_EXPOSURE=13
+X_NO_EXPOSURE=14
+X_VISIBILITY_NOTIFY=15
+X_CREATE_NOTIFY=16
+X_DESTROY_NOTIFY=17
+X_UNMAP_NOTIFY=18
+X_MAP_NOTIFY=19
+X_MAP_REQUEST=20
+X_REPARENT_NOTIFY=21
+X_CONFIGURE_NOTIFY=22
+X_CONFIGURE_REQUEST=23
+X_GRAVITY_NOTIFY=24
+X_RESIZE_REQUEST=25
+X_CIRCULATE_NOTIFY=26
+X_CIRCULATE_REQUEST=27
+X_PROPERTY_NOTIFY=28
+X_SELECTION_CLEAR=29
+X_SELECTION_REQUEST=30
+X_SELECTION_NOTIFY=31
+X_COLORMAP_NOTIFY=32
+X_CLIENT_MESSAGE=33
+X_MAPPING_NOTIFY=34
+
+print8() {
+	local t=0
+	(( $1 )) && printf -v t '%x' "$(( $1 & 16#FF ))"
+	printf '%b' "\x$t"
+}
+
+print16() {
+	local val=$1
+	local l
+
+	print8 "$(( val >> 8 ))"
+	print8 $val
+}
+
+printpad() {
+	local i
+	for (( i=0 ; i<$1 ; i++ )); do
+		print8 0
+	done
+}
+
+printpadv() {
+	printpad "$(( (4 - ($1%4))%4 ))"
+}
+
+
+printchars() {
+	printf "$2"
+}
+
+printxchars() {
+	local xchars=$2
+	local xchar
+	local i
+
+	for (( i=0 ; i<$1 ; i++ )); do
+		xchar=${xchars:$(( i * 2 )):2}
+		printf '%b' "\x$xchar"
+	done
+}
+
+		
+
+read8() {
+	local t
+
+	(( read_count++ ))
+	IFS= read -d '' -n 1 t
+	if [[ -n $t ]]; then
+		printf -v "$1" '%d' "'$t"
+	else
+		printf -v "$1" "0"
+	fi
+}
+
+read16() {
+	local b1 b2
+	read8 b1
+	read8 b2
+	printf -v "$1" "$(( b2 + (b1 << 8) ))"
+}
+
+read32() {
+	local b1 b2 b3 b4
+	read8 b1
+	read8 b2
+	read8 b3
+	read8 b4
+	printf -v "$1" "$(( b4 + (b3 << 8) + (b2 << 16) + (b1 << 24) ))"
+}
+
+readchars() {
+	local i c s
+
+	for (( i=0 ; i<$1 ; i++ )); do
+		(( read_count++ ))
+		IFS= read -d '' -n 1 c
+		if [[ -z $c ]]; then
+			readpad $(( $1 - i - 1 ))
+			break
+		fi
+		s="$s$c"
+	done
+	printf -v "$2" '%s' "$s"
+}
+
+readpad() {
+	local pad i
+
+	for (( i=0 ; i<$1 ; i++ )); do
+		(( read_count++ ))
+		IFS= read -d '' -n 1 pad
+	done
+}
+
+readpadv() {
+	readpad "$(( (4 - ($1%4))%4 ))"
+}
+
+findxauth() {
+	local proto=256
+	local addr="${HOSTNAME}"
+	local display="${DISPLAY#*:}"
+	local length
+
+	while [[ $xauth_proto != $proto ||
+			$xauth_addr != $addr ||
+			$xauth_display != $display ]]; do
+		read16 xauth_proto
+		read16 length
+		readchars $length xauth_addr
+		read16 length
+		readchars $length xauth_display
+		read16 xauth_name_length 
+		readchars $xauth_name_length xauth_name
+		read16 xauth_data_length
+		readchars $xauth_data_length xauth_data
+	done
+}
+
+
+findxauth < "${XAUTHORITY:-~/.Xauthority}"
+
+exec {xfd}<>/dev/tcp/127.0.0.1/6000
+
+lsb_first="$(( 16#42 ))"
+msb_first="$(( 16#6C ))"
+proto_major=11
+proto_minor=0
+
+
+print_setup() {
+	print8 $lsb_first
+	printpad 1
+	print16 $proto_major
+	print16 $proto_minor
+	print16 18
+	print16 16
+	printpad 2
+	printchars 18 "MIT-MAGIC-COOKIE-1"
+	printpadv 18
+	printxchars 16 70ede6e7730126b60ef055cdcf07d541
+	printpadv 16
+}
+
+read_setup_leader() {
+	read8 setup_success
+	read8 setup_length
+	read16 proto_major
+	read16 proto_minor
+	read16 extra_length
+}
+
+read_setup_failure() {
+	readchars $setup_length setup_failure_reason
+	readpad "$(( extra_length * 4 - setup_length ))"
+}
+
+declare -A screens
+
+read_setup_ok() {
+	read32 release_number
+	read32 resource_id_base
+	read32 resource_id_mask
+	read32 motion_buffer_size
+	read16 vendor_length
+	read16 max_request_length
+	read8 no_of_screens
+	read8 no_of_formats
+	read8 image_byte_order
+	read8 bitmap_byte_order
+	read8 bitmap_scanline_unit
+	read8 bitmap_scanline_pad
+	read8 min_keycode
+	read8 max_keycode
+	readpad 4
+	readchars $vendor_length vendor 
+	readpadv $vendor_length
+	readpad $(( 8 * no_of_formats ))
+
+	read_count=0
+
+	for (( i=0 ; i<no_of_screens ; i++ )); do
+		read32 root && screens[$i-root]=$root
+		read32 colormap && screens[$i-colormap]=$colormap
+		read32 white_pixel && screens[$i-white_pixel]=$white_pixel
+		read32 black_pixel && screens[$i-black_pixel]=$black_pixel
+		read32 input_masks && screens[$i-input_masks]=$input_masks
+		read16 width_pixels && screens[$i-width_pixels]=$width_pixels
+		read16 height_pixels && screens[$i-height_pixels]=$height_pixels
+		read16 width_mm && screens[$i-width_mm]=$width_mm
+		read16 height_mm && screens[$i-height_mm]=$height_mm
+		read16 min_maps && screens[$i-min_maps]=$min_maps
+		read16 max_maps && screens[$i-max_maps]=$max_maps
+		read32 visual_id && screens[$i-root_visual]=$root_visual
+		read8 backing_stores && screens[$i-backing_stores]=$backing_stores
+		read8 save_unders && screens[$i-save_unders]=$save_unders
+		read8 root_depth && screens[$i-root_depth]=$root_depth
+		read8 no_of_depths && screens[$i-no_of_depths]=$no_of_depths
+		for (( d=0 ; d<no_of_depths ; d++ )); do
+			pfx=$i,$d
+			read8 depth
+			screens[$pfx-depth]=$depth
+			readpad 1
+			read16 no_of_visuals
+			screens[$pfx-no_of_visuals]=$no_of_visuals
+			readpad 4
+			for (( v=0 ; v<no_of_visuals ; v++ )); do
+				read32 visual_id
+				pfx=$i,$d,$v
+				screens[$pfx-visual_id]=$visual_id
+				read8 class
+				screens[$pfx-class]=$class
+				read8 bits_per_rgb
+				screens[$pfx-bits_per_rgb]=$bits_per_rgb
+				read16 colormaps
+				screens[$pfx-colormaps]=$colormaps
+				read32 red_mask
+				screens[$pfx-red_mask]=$red_mask
+				read32 green_mask
+				screens[$pfx-green_mask]=$green_mask
+				read32 blue_mask
+				screens[$pfx-blue_mask]=$blue_mask
+				readpad 4
+			done
+		done
+	done
+}
+
+beginrequest() {
+	(( sequence_number++ ))
+	print8 $1
+	printpad 1
+	print16 $2
+	[[ $3 ]] && reply_handlers[sequence_number] = $3
+}
+
+print_change_window_events() {
+	local root=screens[$1-root]
+	beginrequest 2 4
+	print8 2
+	printpad 1
+	print16 4
+	print32 $root
+	print32 $X_CW_EVENT_MASK
+	print32 (( $X_EVENT_MASK_SUBSTRUCTURE_REDIRECT |
+		   $X_EVENT_MASK_STRUCTURE_NOTIFY |
+		   $X_EVENT_MASK_SUBSTRUCTURE_NOTIFY |
+		   $X_EVENT_MASK_PROPERTY_CHANGE ))
+}
+
+print_get_keyboard_mapping() {
+	beginrequest 101 2 read_keyboard_mapping
+	print8 $min_keycode
+	print8 $(( 1 + max_keycode - min_keycode ))
+	printpad 2
+}
+
+event_loop() {
+	local input_type
+	while (( input_type != X_ERROR )); do
+		read8 input_type
+		handler=${event_handlers[input_type]}
+		[[ $handler ]] && $handler
+	done
+}
+
+handle_error() {
+	read8 error_code
+	read16 error_seq_no
+	read32 error_data
+	read16 error_major_op_code
+	read8 error_minor_op_code
+	readpad 21
+}
+event_handlers[X_ERROR]=handle_error
+
+handle_reply() {
+	read8 reply_byte
+	read16 reply_seq_no
+	handler=${reply_handlers[reply_seq_no]}
+	[[ $handler ]] || die "Unexpected reply: sequence number = $reply_seq_no"
+	unset reply_handlers[reply_seq_no]
+	$handler $reply_byte $reply_seq_no
+}
+event_handlers[X_REPLY]=handle_reply
+
+handle_motion_notify() {
+}
+event_handlers[X_MOTION_NOTIFY]=handle_motion_notify
+
+handle_enter_notify() {
+}
+event_handlers[X_ENTER_NOTIFY]=handle_enter_notify
+
+handle_destroy_notify() {
+}
+event_handlers[X_DESTROY_NOTIFY]=handle_destroy_notify
+
+handle_button_press() {
+}
+event_handlers[X_BUTTON_PRESS]=handle_button_press
+
+handle_button_release() {
+}
+event_handlers[X_BUTTON_RELEASE]=handle_button_release
+
+handle_key_press() {
+}
+event_handlers[X_KEY_PRESS]=handle_key_press
+
+handle_map_request() {
+}
+event_handlers[X_MAP_REQUEST]=handle_map_request
+
+handle_focus_in() {
+}
+event_handlers[X_FOCUS_IN]=handle_focus_in
+
+handle_focus_out() {
+}
+event_handlers[X_FOCUS_OUT]=handle_focus_out
+
+
+
+print_setup >&"$xfd"
+
+#i=0
+#while : ; do
+#	(( ++i ))
+#	read -d '' -n 1 -u $xfd char
+#	printf '[ %d ] ' $?
+#	if [[ -z $char ]]; then
+#		printf '0\n'
+#	else
+#		printf '%d\n' "'${char}"
+#	fi
+#done
+#exit 0
+
+read_setup_leader <&"$xfd"
+
+if (( $setup_success != 1 )); then
+	read_setup_failure <&"$xfd"
+
+	printf 'Setup Failed '
+	(( $setup_success == 2 )) && printf '(Auth) '
+	printf ': %s\n' "$setup_failure_reason"
+	exit $setup_success
+fi
+
+echo "extra_length = $extra_length"
+
+read_setup_ok <&"$xfd"
+
+echo "read_count = $read_count"
+
+echo "release number = $release_number"
+echo "max_request_length = $max_request_length"
+echo "vendor_length = $vendor_length"
+echo "vendor = $vendor"
+echo "screens = $no_of_screens"
+echo "formats = $no_of_formats"
+echo "keycodes = $min_keycode .. $max_keycode"
+
+echo "width_pixels = ${screens[0-width_pixels]}"
+echo "height_pixels = ${screens[0-height_pixels]}"
+echo "width_mm = ${screens[0-width_mm]}"
+echo "height_mm = ${screens[0-height_mm]}"
+
+

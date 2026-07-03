@@ -65,7 +65,7 @@ menu() {
         local dmclip_WINDOW dmclip_X dmclip_Y dmclip_WIDTH dmclip_HEIGHT dmclip_SCREEN
         eval "$geom"
         (( x=dmclip_X+bw ))
-        (( y=dmclip_Y+bw+(dmclip_HEIGHT-dmclip_Y)/2 ))
+        (( y=dmclip_Y+bw ))
         (( z=dmclip_WIDTH-(bw*2) ))
 
         dmenu -i -x $x -y $y -z $z -l $l -fn "$fn" -nf $nf -nb $nb -sb $sb -p $p -bw $bw 

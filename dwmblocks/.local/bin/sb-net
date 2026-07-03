@@ -26,4 +26,4 @@ fi
 # Ethernet
 [[ "$(cat /sys/class/net/e*/operstate 2>/dev/null)" =~ 'up' ]] && ether_txt=' '
 
-printf "%s%s\n" " $wifi_txt" "$ether_txt"
+printf "%s%s\n" "$wifi_txt" "$ether_txt"

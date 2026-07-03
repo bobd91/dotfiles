@@ -27,7 +27,7 @@ print_volume() {
 		# may be dummy output or no selected device (no '*') on startup
 		# so check status for selected device that is not Dummy Output
 		wpstat="$($stat_cmd | sed '/\*.*vol: 1.00/!'d)"
-		while [[ -z $wpstat || $wpstat =~ 'Dummy Output' ]]; do
+		while [[ -z "${wpstat// }" || $wpstat =~ 'Dummy Output' ]]; do
 			vol=""
 			sleep 0.1
 			wpstat="$($stat_cmd | sed '/\*.*vol: 1.00/!'d)"
@@ -37,7 +37,9 @@ print_volume() {
 
 	[[ $vol =~ '[MUTED]' ]] && echo "$muted" && return
 	[[ $vol =~ 'Volume: 1.00' ]] && echo "$spkr 100%" && return
+
 	echo "$spkr ${vol#*\.}%"
+
 }
 
 print_volume

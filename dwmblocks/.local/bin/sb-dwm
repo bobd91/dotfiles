@@ -1,0 +1,12 @@
+#!/bin/sh
+
+TERMINAL=${TERMINAL:-st}
+
+if [[ $BUTTON ]]; then
+	case $BUTTON in
+		3) setsid -f "$TERMINAL" -e "$EDITOR" "$0" ;;
+	esac
+	exit
+fi
+
+printf ' \uf356\n'

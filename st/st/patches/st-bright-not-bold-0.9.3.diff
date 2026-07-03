@@ -1,4 +1,11 @@
-1283c1283
-< 				font = &dc.bfont;
----
-> 				font = &dc.font;
+--- a/x.c	2026-06-25 22:46:52.620370600 +0100
++++ b/x.c	2026-06-25 22:47:39.292380143 +0100
+@@ -1280,7 +1280,7 @@ xmakeglyphfontspecs(XftGlyphFontSpec *sp
+ 				font = &dc.ifont;
+ 				frcflags = FRC_ITALIC;
+ 			} else if (mode & ATTR_BOLD) {
+-				font = &dc.bfont;
++				font = &dc.font;
+ 				frcflags = FRC_BOLD;
+ 			}
+ 			yp = winy + font->ascent;
