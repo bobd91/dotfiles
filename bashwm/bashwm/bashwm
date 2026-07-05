@@ -1,84 +1,594 @@
 #!/usr/bin/env bash
 LC_CTYPE=C
 
-X_EVENT_MASK_NO_EVENT=0
-X_EVENT_MASK_KEY_PRESS=1
-X_EVENT_MASK_KEY_RELEASE=2
-X_EVENT_MASK_BUTTON_PRESS=4
-X_EVENT_MASK_BUTTON_RELEASE=8
-X_EVENT_MASK_ENTER_WINDOW=16
-X_EVENT_MASK_LEAVE_WINDOW=32
-X_EVENT_MASK_POINTER_MOTION=64
-X_EVENT_MASK_POINTER_MOTION_HINT=128
-X_EVENT_MASK_BUTTON_1_MOTION=256
-X_EVENT_MASK_BUTTON_2_MOTION=512
-X_EVENT_MASK_BUTTON_3_MOTION=1024
-X_EVENT_MASK_BUTTON_4_MOTION=2048
-X_EVENT_MASK_BUTTON_5_MOTION=4096
-X_EVENT_MASK_BUTTON_MOTION=8192
-X_EVENT_MASK_KEYMAP_STATE=16384
-X_EVENT_MASK_EXPOSURE=32768
-X_EVENT_MASK_VISIBILITY_CHANGE=65536
-X_EVENT_MASK_STRUCTURE_NOTIFY=131072
-X_EVENT_MASK_RESIZE_REDIRECT=262144
-X_EVENT_MASK_SUBSTRUCTURE_NOTIFY=524288
-X_EVENT_MASK_SUBSTRUCTURE_REDIRECT=1048576
-X_EVENT_MASK_FOCUS_CHANGE=2097152
-X_EVENT_MASK_PROPERTY_CHANGE=4194304
-X_EVENT_MASK_COLOR_MAP_CHANGE=8388608
-X_EVENT_MASK_OWNER_GRAB_BUTTON=16777216
+X_ParentRelative=1
+X_CopyFromParent=0
+X_PointerWindow=0
+X_InputFocus=1
+X_PointerRoot=1
+X_AnyPropertyType=0
+X_AnyKey=0	
+X_AnyButton=0
+X_AllTemporary=0
+X_CurrentTime=0
+X_NoSymbol=0	
+X_NoEventMask=0
+X_KeyPressMask=$(( 1<<0 ))
+X_KeyReleaseMask=$(( 1<<1 ))
+X_ButtonPressMask=$(( 1<<2 ))
+X_ButtonReleaseMask=$(( 1<<3 ))
+X_EnterWindowMask=$(( 1<<4 ))
+X_LeaveWindowMask=$(( 1<<5 ))
+X_PointerMotionMask=$(( 1<<6 ))
+X_PointerMotionHintMask=$(( 1<<7 ))
+X_Button1MotionMask=$(( 1<<8 ))
+X_Button2MotionMask=$(( 1<<9 ))
+X_Button3MotionMask=$(( 1<<10 ))
+X_Button4MotionMask=$(( 1<<11 ))
+X_Button5MotionMask=$(( 1<<12 ))
+X_ButtonMotionMask=$(( 1<<13 ))
+X_KeymapStateMask=$(( 1<<14 ))
+X_ExposureMask=$(( 1<<15 ))
+X_VisibilityChangeMask=$(( 1<<16 ))
+X_StructureNotifyMask=$(( 1<<17 ))
+X_ResizeRedirectMask=$(( 1<<18 ))
+X_SubstructureNotifyMask=$(( 1<<19 ))
+X_SubstructureRedirectMask=$(( 1<<20 ))
+X_FocusChangeMask=$(( 1<<21 ))
+X_PropertyChangeMask=$(( 1<<22 ))
+X_ColormapChangeMask=$(( 1<<23 ))
+X_OwnerGrabButtonMask=$(( 1<<24 ))
+X_Error=0
+X_Reply=1
+X_KeyPress=2
+X_KeyRelease=3
+X_ButtonPress=4
+X_ButtonRelease=5
+X_MotionNotify=6
+X_EnterNotify=7
+X_LeaveNotify=8
+X_FocusIn=9
+X_FocusOut=10
+X_KeymapNotify=11
+X_Expose=12
+X_GraphicsExpose=13
+X_NoExpose=14
+X_VisibilityNotify=15
+X_CreateNotify=16
+X_DestroyNotify=17
+X_UnmapNotify=18
+X_MapNotify=19
+X_MapRequest=20
+X_ReparentNotify=21
+X_ConfigureNotify=22
+X_ConfigureRequest=23
+X_GravityNotify=24
+X_ResizeRequest=25
+X_CirculateNotify=26
+X_CirculateRequest=27
+X_PropertyNotify=28
+X_SelectionClear=29
+X_SelectionRequest=30
+X_SelectionNotify=31
+X_ColormapNotify=32
+X_ClientMessage=33
+X_MappingNotify=34
+X_GenericEvent=35
+X_LASTEvent=36	
+X_ShiftMask=$(( 1<<0 ))
+X_LockMask=$(( 1<<1 ))
+X_ControlMask=$(( 1<<2 ))
+X_Mod1Mask=$(( 1<<3 ))
+X_Mod2Mask=$(( 1<<4 ))
+X_Mod3Mask=$(( 1<<5 ))
+X_Mod4Mask=$(( 1<<6 ))
+X_Mod5Mask=$(( 1<<7 ))
+X_ShiftMapIndex=0
+X_LockMapIndex=1
+X_ControlMapIndex=2
+X_Mod1MapIndex=3
+X_Mod2MapIndex=4
+X_Mod3MapIndex=5
+X_Mod4MapIndex=6
+X_Mod5MapIndex=7
+X_Button1Mask=$(( 1<<8 ))
+X_Button2Mask=$(( 1<<9 ))
+X_Button3Mask=$(( 1<<10 ))
+X_Button4Mask=$(( 1<<11 ))
+X_Button5Mask=$(( 1<<12 ))
+X_AnyModifier=$(( 1<<15 ))
+X_Button1=1
+X_Button2=2
+X_Button3=3
+X_Button4=4
+X_Button5=5
+X_NotifyNormal=0
+X_NotifyGrab=1
+X_NotifyUngrab=2
+X_NotifyWhileGrabbed=3
+X_NotifyHint=1	
+X_NotifyAncestor=0
+X_NotifyVirtual=1
+X_NotifyInferior=2
+X_NotifyNonlinear=3
+X_NotifyNonlinearVirtual=4
+X_NotifyPointer=5
+X_NotifyPointerRoot=6
+X_NotifyDetailNone=7
+X_VisibilityUnobscured=0
+X_VisibilityPartiallyObscured=1
+X_VisibilityFullyObscured=2
+X_PlaceOnTop=0
+X_PlaceOnBottom=1
+X_FamilyInternet=0	
+X_FamilyDECnet=1
+X_FamilyChaos=2
+X_FamilyInternet6=6	
+X_FamilyServerInterpreted=5
+X_PropertyNewValue=0
+X_PropertyDelete=1
+X_ColormapUninstalled=0
+X_ColormapInstalled=1
+X_GrabModeSync=0
+X_GrabModeAsync=1
+X_GrabSuccess=0
+X_AlreadyGrabbed=1
+X_GrabInvalidTime=2
+X_GrabNotViewable=3
+X_GrabFrozen=4
+X_AsyncPointer=0
+X_SyncPointer=1
+X_ReplayPointer=2
+X_AsyncKeyboard=3
+X_SyncKeyboard=4
+X_ReplayKeyboard=5
+X_AsyncBoth=6
+X_SyncBoth=7
+X_RevertToNone=0
+X_RevertToPointerRoot=$X_PointerRoot
+X_RevertToParent=2
+X_Success=0	
+X_BadRequest=1	
+X_BadValue=2	
+X_BadWindow=3	
+X_BadPixmap=4	
+X_BadAtom=5	
+X_BadCursor=6	
+X_BadFont=7	
+X_BadMatch=8	
+X_BadDrawable=9	
+X_BadAccess=10	
+X_BadAlloc=11	
+X_BadColor=12	
+X_BadGC=13	
+X_BadIDChoice=14	
+X_BadName=15	
+X_BadLength=16	
+X_BadImplementation=17
+X_FirstExtensionError=128
+X_LastExtensionError=255
+X_InputOutput=1
+X_InputOnly=2
+X_CWBackPixmap=$(( 1<<0 ))
+X_CWBackPixel=$(( 1<<1 ))
+X_CWBorderPixmap=$(( 1<<2 ))
+X_CWBorderPixel=$(( 1<<3 ))
+X_CWBitGravity=$(( 1<<4 ))
+X_CWWinGravity=$(( 1<<5 ))
+X_CWBackingStore=$(( 1<<6 ))
+X_CWBackingPlanes=$(( 1<<7 ))
+X_CWBackingPixel=$(( 1<<8 ))
+X_CWOverrideRedirect=$(( 1<<9 ))
+X_CWSaveUnder=$(( 1<<10 ))
+X_CWEventMask=$(( 1<<11 ))
+X_CWDontPropagate=$(( 1<<12 ))
+X_CWColormap=$(( 1<<13 ))
+X_CWCursor=$(( 1<<14 ))
+X_CWX=$(( 1<<0 ))
+X_CWY=$(( 1<<1 ))
+X_CWWidth=$(( 1<<2 ))
+X_CWHeight=$(( 1<<3 ))
+X_CWBorderWidth=$(( 1<<4 ))
+X_CWSibling=$(( 1<<5 ))
+X_CWStackMode=$(( 1<<6 ))
+X_ForgetGravity=0
+X_NorthWestGravity=1
+X_NorthGravity=2
+X_NorthEastGravity=3
+X_WestGravity=4
+X_CenterGravity=5
+X_EastGravity=6
+X_SouthWestGravity=7
+X_SouthGravity=8
+X_SouthEastGravity=9
+X_StaticGravity=10
+X_UnmapGravity=0
+X_NotUseful=0
+X_WhenMapped=1
+X_Always=2
+X_IsUnmapped=0
+X_IsUnviewable=1
+X_IsViewable=2
+X_SetModeInsert=0
+X_SetModeDelete=1
+X_DestroyAll=0
+X_RetainPermanent=1
+X_RetainTemporary=2
+X_Above=0
+X_Below=1
+X_TopIf=2
+X_BottomIf=3
+X_Opposite=4
+X_RaiseLowest=0
+X_LowerHighest=1
+X_PropModeReplace=0
+X_PropModePrepend=1
+X_PropModeAppend=2
 
-X_CW_BACK_PIXMAP=1
-X_CW_BACK_PIXEL=2
-X_CW_BORDER_PIXMAP=4
-X_CW_BORDER_PIXEL=8
-X_CW_BIT_GRAVITY=16
-X_CW_WIN_GRAVITY=32
-X_CW_BACKING_STORE=64
-X_CW_BACKING_PLANES=128
-X_CW_BACKING_PIXEL=256
-X_CW_OVERRIDE_REDIRECT=512
-X_CW_SAVE_UNDER=1024
-X_CW_EVENT_MASK=2048
-X_CW_DONT_PROPAGATE=4096
-X_CW_COLORMAP=8192
-X_CW_CURSOR=16384
+XK_space=$(( 16#0020 ))
+XK_exclam=$(( 16#0021 ))
+XK_quotedbl=$(( 16#0022 ))
+XK_numbersign=$(( 16#0023 ))
+XK_dollar=$(( 16#0024 ))
+XK_percent=$(( 16#0025 ))
+XK_ampersand=$(( 16#0026 ))
+XK_apostrophe=$(( 16#0027 ))
+XK_quoteright=$(( 16#0027 ))
+XK_parenleft=$(( 16#0028 ))
+XK_parenright=$(( 16#0029 ))
+XK_asterisk=$(( 16#002a ))
+XK_plus=$(( 16#002b ))
+XK_comma=$(( 16#002c ))
+XK_minus=$(( 16#002d ))
+XK_period=$(( 16#002e ))
+XK_slash=$(( 16#002f ))
+XK_0=$(( 16#0030 ))
+XK_1=$(( 16#0031 ))
+XK_2=$(( 16#0032 ))
+XK_3=$(( 16#0033 ))
+XK_4=$(( 16#0034 ))
+XK_5=$(( 16#0035 ))
+XK_6=$(( 16#0036 ))
+XK_7=$(( 16#0037 ))
+XK_8=$(( 16#0038 ))
+XK_9=$(( 16#0039 ))
+XK_colon=$(( 16#003a ))
+XK_semicolon=$(( 16#003b ))
+XK_less=$(( 16#003c ))
+XK_equal=$(( 16#003d ))
+XK_greater=$(( 16#003e ))
+XK_question=$(( 16#003f ))
+XK_at=$(( 16#0040 ))
+XK_A=$(( 16#0041 ))
+XK_B=$(( 16#0042 ))
+XK_C=$(( 16#0043 ))
+XK_D=$(( 16#0044 ))
+XK_E=$(( 16#0045 ))
+XK_F=$(( 16#0046 ))
+XK_G=$(( 16#0047 ))
+XK_H=$(( 16#0048 ))
+XK_I=$(( 16#0049 ))
+XK_J=$(( 16#004a ))
+XK_K=$(( 16#004b ))
+XK_L=$(( 16#004c ))
+XK_M=$(( 16#004d ))
+XK_N=$(( 16#004e ))
+XK_O=$(( 16#004f ))
+XK_P=$(( 16#0050 ))
+XK_Q=$(( 16#0051 ))
+XK_R=$(( 16#0052 ))
+XK_S=$(( 16#0053 ))
+XK_T=$(( 16#0054 ))
+XK_U=$(( 16#0055 ))
+XK_V=$(( 16#0056 ))
+XK_W=$(( 16#0057 ))
+XK_X=$(( 16#0058 ))
+XK_Y=$(( 16#0059 ))
+XK_Z=$(( 16#005a ))
+XK_bracketleft=$(( 16#005b ))
+XK_backslash=$(( 16#005c ))
+XK_bracketright=$(( 16#005d ))
+XK_asciicircum=$(( 16#005e ))
+XK_underscore=$(( 16#005f ))
+XK_grave=$(( 16#0060 ))
+XK_quoteleft=$(( 16#0060 ))
+XK_a=$(( 16#0061 ))
+XK_b=$(( 16#0062 ))
+XK_c=$(( 16#0063 ))
+XK_d=$(( 16#0064 ))
+XK_e=$(( 16#0065 ))
+XK_f=$(( 16#0066 ))
+XK_g=$(( 16#0067 ))
+XK_h=$(( 16#0068 ))
+XK_i=$(( 16#0069 ))
+XK_j=$(( 16#006a ))
+XK_k=$(( 16#006b ))
+XK_l=$(( 16#006c ))
+XK_m=$(( 16#006d ))
+XK_n=$(( 16#006e ))
+XK_o=$(( 16#006f ))
+XK_p=$(( 16#0070 ))
+XK_q=$(( 16#0071 ))
+XK_r=$(( 16#0072 ))
+XK_s=$(( 16#0073 ))
+XK_t=$(( 16#0074 ))
+XK_u=$(( 16#0075 ))
+XK_v=$(( 16#0076 ))
+XK_w=$(( 16#0077 ))
+XK_x=$(( 16#0078 ))
+XK_y=$(( 16#0079 ))
+XK_z=$(( 16#007a ))
+XK_braceleft=$(( 16#007b ))
+XK_bar=$(( 16#007c ))
+XK_braceright=$(( 16#007d ))
+XK_asciitilde=$(( 16#007e ))
+XK_BackSpace=$(( 16#ff08 ))
+XK_Tab=$(( 16#ff09 ))
+XK_Linefeed=$(( 16#ff0a ))
+XK_Clear=$(( 16#ff0b ))
+XK_Return=$(( 16#ff0d ))
+XK_Pause=$(( 16#ff13 ))
+XK_Scroll_Lock=$(( 16#ff14 ))
+XK_Sys_Req=$(( 16#ff15 ))
+XK_Escape=$(( 16#ff1b ))
+XK_Delete=$(( 16#ffff ))
+XK_Home=$(( 16#ff50 ))
+XK_Left=$(( 16#ff51 ))
+XK_Up=$(( 16#ff52 ))
+XK_Right=$(( 16#ff53 ))
+XK_Down=$(( 16#ff54 ))
+XK_Prior=$(( 16#ff55 ))
+XK_Page_Up=$(( 16#ff55 ))
+XK_Next=$(( 16#ff56 ))
+XK_Page_Down=$(( 16#ff56 ))
+XK_End=$(( 16#ff57 ))
+XK_Begin=$(( 16#ff58 ))
+XK_Select=$(( 16#ff60 ))
+XK_Print=$(( 16#ff61 ))
+XK_Execute=$(( 16#ff62 ))
+XK_Insert=$(( 16#ff63 ))
+XK_Undo=$(( 16#ff65 ))
+XK_Redo=$(( 16#ff66 ))
+XK_Menu=$(( 16#ff67 ))
+XK_Find=$(( 16#ff68 ))
+XK_Cancel=$(( 16#ff69 ))
+XK_Help=$(( 16#ff6a ))
+XK_Break=$(( 16#ff6b ))
+XK_Mode_switch=$(( 16#ff7e ))
+XK_script_switch=$(( 16#ff7e ))
+XK_Num_Lock=$(( 16#ff7f ))
+XK_KP_Space=$(( 16#ff80 ))
+XK_KP_Tab=$(( 16#ff89 ))
+XK_KP_Enter=$(( 16#ff8d ))
+XK_KP_F1=$(( 16#ff91 ))
+XK_KP_F2=$(( 16#ff92 ))
+XK_KP_F3=$(( 16#ff93 ))
+XK_KP_F4=$(( 16#ff94 ))
+XK_KP_Home=$(( 16#ff95 ))
+XK_KP_Left=$(( 16#ff96 ))
+XK_KP_Up=$(( 16#ff97 ))
+XK_KP_Right=$(( 16#ff98 ))
+XK_KP_Down=$(( 16#ff99 ))
+XK_KP_Prior=$(( 16#ff9a ))
+XK_KP_Page_Up=$(( 16#ff9a ))
+XK_KP_Next=$(( 16#ff9b ))
+XK_KP_Page_Down=$(( 16#ff9b ))
+XK_KP_End=$(( 16#ff9c ))
+XK_KP_Begin=$(( 16#ff9d ))
+XK_KP_Insert=$(( 16#ff9e ))
+XK_KP_Delete=$(( 16#ff9f ))
+XK_KP_Equal=$(( 16#ffbd ))
+XK_KP_Multiply=$(( 16#ffaa ))
+XK_KP_Add=$(( 16#ffab ))
+XK_KP_Separator=$(( 16#ffac ))
+XK_KP_Subtract=$(( 16#ffad ))
+XK_KP_Decimal=$(( 16#ffae ))
+XK_KP_Divide=$(( 16#ffaf ))
+XK_KP_0=$(( 16#ffb0 ))
+XK_KP_1=$(( 16#ffb1 ))
+XK_KP_2=$(( 16#ffb2 ))
+XK_KP_3=$(( 16#ffb3 ))
+XK_KP_4=$(( 16#ffb4 ))
+XK_KP_5=$(( 16#ffb5 ))
+XK_KP_6=$(( 16#ffb6 ))
+XK_KP_7=$(( 16#ffb7 ))
+XK_KP_8=$(( 16#ffb8 ))
+XK_KP_9=$(( 16#ffb9 ))
+XK_F1=$(( 16#ffbe ))
+XK_F2=$(( 16#ffbf ))
+XK_F3=$(( 16#ffc0 ))
+XK_F4=$(( 16#ffc1 ))
+XK_F5=$(( 16#ffc2 ))
+XK_F6=$(( 16#ffc3 ))
+XK_F7=$(( 16#ffc4 ))
+XK_F8=$(( 16#ffc5 ))
+XK_F9=$(( 16#ffc6 ))
+XK_F10=$(( 16#ffc7 ))
+XK_F11=$(( 16#ffc8 ))
+XK_L1=$(( 16#ffc8 ))
+XK_F12=$(( 16#ffc9 ))
+XK_L2=$(( 16#ffc9 ))
+XK_F13=$(( 16#ffca ))
+XK_L3=$(( 16#ffca ))
+XK_F14=$(( 16#ffcb ))
+XK_L4=$(( 16#ffcb ))
+XK_F15=$(( 16#ffcc ))
+XK_L5=$(( 16#ffcc ))
+XK_F16=$(( 16#ffcd ))
+XK_L6=$(( 16#ffcd ))
+XK_F17=$(( 16#ffce ))
+XK_L7=$(( 16#ffce ))
+XK_F18=$(( 16#ffcf ))
+XK_L8=$(( 16#ffcf ))
+XK_F19=$(( 16#ffd0 ))
+XK_L9=$(( 16#ffd0 ))
+XK_F20=$(( 16#ffd1 ))
+XK_L10=$(( 16#ffd1 ))
+XK_F21=$(( 16#ffd2 ))
+XK_R1=$(( 16#ffd2 ))
+XK_F22=$(( 16#ffd3 ))
+XK_R2=$(( 16#ffd3 ))
+XK_F23=$(( 16#ffd4 ))
+XK_R3=$(( 16#ffd4 ))
+XK_F24=$(( 16#ffd5 ))
+XK_R4=$(( 16#ffd5 ))
+XK_F25=$(( 16#ffd6 ))
+XK_R5=$(( 16#ffd6 ))
+XK_F26=$(( 16#ffd7 ))
+XK_R6=$(( 16#ffd7 ))
+XK_F27=$(( 16#ffd8 ))
+XK_R7=$(( 16#ffd8 ))
+XK_F28=$(( 16#ffd9 ))
+XK_R8=$(( 16#ffd9 ))
+XK_F29=$(( 16#ffda ))
+XK_R9=$(( 16#ffda ))
+XK_F30=$(( 16#ffdb ))
+XK_R10=$(( 16#ffdb ))
+XK_F31=$(( 16#ffdc ))
+XK_R11=$(( 16#ffdc ))
+XK_F32=$(( 16#ffdd ))
+XK_R12=$(( 16#ffdd ))
+XK_F33=$(( 16#ffde ))
+XK_R13=$(( 16#ffde ))
+XK_F34=$(( 16#ffdf ))
+XK_R14=$(( 16#ffdf ))
+XK_F35=$(( 16#ffe0 ))
+XK_R15=$(( 16#ffe0 ))
+XK_Shift_L=$(( 16#ffe1 ))
+XK_Shift_R=$(( 16#ffe2 ))
+XK_Control_L=$(( 16#ffe3 ))
+XK_Control_R=$(( 16#ffe4 ))
+XK_Caps_Lock=$(( 16#ffe5 ))
+XK_Shift_Lock=$(( 16#ffe6 ))
+XK_Meta_L=$(( 16#ffe7 ))
+XK_Meta_R=$(( 16#ffe8 ))
+XK_Alt_L=$(( 16#ffe9 ))
+XK_Alt_R=$(( 16#ffea ))
+XK_Super_L=$(( 16#ffeb ))
+XK_Super_R=$(( 16#ffec ))
 
-X_ERROR=0
-X_REPLY=1
-X_KEY_PRESS=2
-X_KEY_RELEASE=3
-X_BUTTON_PRESS=4
-X_BUTTON_RELEASE=5
-X_MOTION_NOTIFY=6
-X_ENTER_NOTIFY=7
-X_LEAVE_NOTIFY=8
-X_FOCUS_IN=9
-X_FOCUS_OUT=10
-X_KEYMAP_NOTIFY=11
-X_EXPOSE=12
-X_GRAPHICS_EXPOSURE=13
-X_NO_EXPOSURE=14
-X_VISIBILITY_NOTIFY=15
-X_CREATE_NOTIFY=16
-X_DESTROY_NOTIFY=17
-X_UNMAP_NOTIFY=18
-X_MAP_NOTIFY=19
-X_MAP_REQUEST=20
-X_REPARENT_NOTIFY=21
-X_CONFIGURE_NOTIFY=22
-X_CONFIGURE_REQUEST=23
-X_GRAVITY_NOTIFY=24
-X_RESIZE_REQUEST=25
-X_CIRCULATE_NOTIFY=26
-X_CIRCULATE_REQUEST=27
-X_PROPERTY_NOTIFY=28
-X_SELECTION_CLEAR=29
-X_SELECTION_REQUEST=30
-X_SELECTION_NOTIFY=31
-X_COLORMAP_NOTIFY=32
-X_CLIENT_MESSAGE=33
-X_MAPPING_NOTIFY=34
+
+X_CreateWindow=1
+X_ChangeWindowAttributes=2
+X_GetWindowAttributes=3
+X_DestroyWindow=4
+X_DestroySubwindows=5
+X_ChangeSaveSet=6
+X_ReparentWindow=7
+X_MapWindow=8
+X_MapSubwindows=9
+X_UnmapWindow=10
+X_UnmapSubwindows=11
+X_ConfigureWindow=12
+X_CirculateWindow=13
+X_GetGeometry=14
+X_QueryTree=15
+X_InternAtom=16
+X_GetAtomName=17
+X_ChangeProperty=18
+X_DeleteProperty=19
+X_GetProperty=20
+X_ListProperties=21
+X_SetSelectionOwner=22
+X_GetSelectionOwner=23
+X_ConvertSelection=24
+X_SendEvent=25
+X_GrabPointer=26
+X_UngrabPointer=27
+X_GrabButton=28
+X_UngrabButton=29
+X_ChangeActivePointerGrab=30
+X_GrabKeyboard=31
+X_UngrabKeyboard=32
+X_GrabKey=33
+X_UngrabKey=34
+X_AllowEvents=35
+X_GrabServer=36
+X_UngrabServer=37
+X_QueryPointer=38
+X_GetMotionEvents=39
+X_TranslateCoordinates=40
+X_WarpPointer=41
+X_SetInputFocus=42
+X_GetInputFocus=43
+X_QueryKeymap=44
+X_OpenFont=45
+X_CloseFont=46
+X_QueryFont=47
+X_QueryTextExtents=48
+X_ListFonts=49
+X_ListFontsWithInfo=50
+X_SetFontPath=51
+X_GetFontPath=52
+X_CreatePixmap=53
+X_FreePixmap=54
+X_CreateGc=55
+X_ChangeGc=56
+X_CopyGc=57
+X_SetDashes=58
+X_SetClipRectangles=59
+X_FreeGc=60
+X_ClearArea=61
+X_CopyArea=62
+X_CopyPlane=63
+X_PolyPoint=64
+X_PolyLine=65
+X_PolySegment=66
+X_PolyRectangle=67
+X_PolyArc=68
+X_FillPoly=69
+X_PolyFillRectangle=70
+X_PolyFillArc=71
+X_PutImage=72
+X_GetImage=73
+X_PolyText_8=74
+X_PolyText_16=75
+X_ImageText_8=76
+X_ImageText_16=77
+X_CreateColormap=78
+X_FreeColormap=79
+X_CopyColormapAndFree=80
+X_InstallColormap=81
+X_UninstallColormap=82
+X_ListInstalledColormaps=83
+X_AllocColor=84
+X_AllocNamedColor=85
+X_AllocColorCells=86
+X_AllocColorPlanes=87
+X_FreeColors=88
+X_StoreColors=89
+X_StoreNamedColor=90
+X_QueryColors=91
+X_LookupColor=92
+X_CreateCursor=93
+X_CreateGlyphCursor=94
+X_FreeCursor=95
+X_RecolorCursor=96
+X_QueryBestSize=97
+X_QueryExtension=98
+X_ListExtensions=99
+X_ChangeKeyboardMapping=100
+X_GetKeyboardMapping=101
+X_ChangeKeyboardControl=102
+X_GetKeyboardControl=103
+X_Bell=104
+X_ChangePointerControl=105
+X_GetPointerControl=106
+X_SetScreenSaver=107
+X_GetScreenSaver=108
+X_ChangeHosts=109
+X_ListHosts=110
+X_SetAccessControl=111
+X_SetCloseDownMode=112
+X_KillClient=113
+X_RotateProperties=114
+X_ForceScreenSaver=115
+X_SetPointerMapping=116
+X_GetPointerMapping=117
+X_SetModifierMapping=118
+X_GetModifierMapping=119
+X_NoOperation=127
+
 
 print8() {
 	local t=0
@@ -88,9 +598,17 @@ print8() {
 
 print16() {
 	local val=$1
-	local l
 
-	print8 "$(( val >> 8 ))"
+	print8 $(( val >> 8 ))
+	print8 $val
+}
+
+print32() {
+	local val=$1
+
+	print8 $(( val >> 24 ))
+	print8 $(( val >> 16 ))
+	print8 $(( val >> 8 ))
 	print8 $val
 }
 
@@ -102,12 +620,15 @@ printpad() {
 }
 
 printpadv() {
-	printpad "$(( (4 - ($1%4))%4 ))"
+	printpad $(( (4 - ($1%4))%4 ))
 }
 
 
 printchars() {
-	printf "$2"
+	local len=$1
+	local chars=$2
+	(( len == ${#chars} )) || printf "%d != %d\n" $len ${#chars} > x.log
+	printf '%s' "$2"
 }
 
 printxchars() {
@@ -127,7 +648,7 @@ read8() {
 	local t
 
 	(( read_count++ ))
-	IFS= read -d '' -n 1 t
+	IFS= read -r -d '' -n 1 t
 	if [[ -n $t ]]; then
 		printf -v "$1" '%d' "'$t"
 	else
@@ -156,7 +677,7 @@ readchars() {
 
 	for (( i=0 ; i<$1 ; i++ )); do
 		(( read_count++ ))
-		IFS= read -d '' -n 1 c
+		IFS= read -r -d '' -n 1 c
 		if [[ -z $c ]]; then
 			readpad $(( $1 - i - 1 ))
 			break
@@ -171,7 +692,7 @@ readpad() {
 
 	for (( i=0 ; i<$1 ; i++ )); do
 		(( read_count++ ))
-		IFS= read -d '' -n 1 pad
+		IFS= read -r -d '' -n 1 pad
 	done
 }
 
@@ -219,9 +740,9 @@ print_setup() {
 	print16 18
 	print16 16
 	printpad 2
-	printchars 18 "MIT-MAGIC-COOKIE-1"
+	printchars 18 "$xauth_name"
 	printpadv 18
-	printxchars 16 70ede6e7730126b60ef055cdcf07d541
+	printchars 16 "$xauth_data"
 	printpadv 16
 }
 
@@ -239,6 +760,15 @@ read_setup_failure() {
 }
 
 declare -A screens
+
+count_reads() {
+	read_count=0
+	while : ;do
+		local foo
+		read8 'foo'
+		printf '%02x ' $foo
+	done
+}
 
 read_setup_ok() {
 	read32 release_number
@@ -286,6 +816,7 @@ read_setup_ok() {
 			readpad 1
 			read16 no_of_visuals
 			screens[$pfx-no_of_visuals]=$no_of_visuals
+			printf 'depth %d, no_of_visuals %d\n' $depth $no_of_visuals
 			readpad 4
 			for (( v=0 ; v<no_of_visuals ; v++ )); do
 				read32 visual_id
@@ -310,37 +841,60 @@ read_setup_ok() {
 }
 
 beginrequest() {
+	local handler=${reply_handlers[$1]}
 	(( sequence_number++ ))
 	print8 $1
 	printpad 1
 	print16 $2
-	[[ $3 ]] && reply_handlers[sequence_number] = $3
+	[[ $handler ]] && request_map[sequence_number]=$handler 
 }
 
 print_change_window_events() {
 	local root=screens[$1-root]
-	beginrequest 2 4
+	beginrequest $X_ChangeWindowAttributes 4
 	print8 2
 	printpad 1
 	print16 4
 	print32 $root
-	print32 $X_CW_EVENT_MASK
-	print32 (( $X_EVENT_MASK_SUBSTRUCTURE_REDIRECT |
-		   $X_EVENT_MASK_STRUCTURE_NOTIFY |
-		   $X_EVENT_MASK_SUBSTRUCTURE_NOTIFY |
-		   $X_EVENT_MASK_PROPERTY_CHANGE ))
+	print32 $X_CWEventMask
+	print32 $(( $X_SubstructureRedirectMask | 
+		    $X_StructureNotifyMask |      
+		    $X_SubstructureNotifyMask |   
+		    $X_PropertyChangeMask ))
 }
 
 print_get_keyboard_mapping() {
-	beginrequest 101 2 read_keyboard_mapping
+	beginrequest $X_GetKeyboardMapping 2
 	print8 $min_keycode
 	print8 $(( 1 + max_keycode - min_keycode ))
 	printpad 2
 }
 
+declare -A keyboard_map
+read_keyboard_mapping() {
+	local keysyms_per=$1
+	local keycodes=$(( 1 + max_keycode - min_keycode ))
+	local key_mappings=$(( keysyms_per * keycodes ))
+	local keycode keysym
+
+	read32 reply_length
+	(( reply_length == key_mappings )) ||
+		die "Unexpected number of keboard mappings: " \
+			"Got $reply_length, Expected $key_mappings"
+	readpad 24
+	for (( keycode=min_keycode ; keycode<max_keycode ; keycode++ )); do
+		for (( keysym=0 ; keysym<keysyms_per ; keysym++ )); do
+			read32 keycodesym
+			keyboard_map["$keycode:$keysym"]=$keycodesym
+			printf '%d:%d = %04x\n' $keycode $keysym $keycodesym >> bashwm.log
+		done
+	done
+}
+reply_handlers[X_GetKeyboardMapping]=read_keyboard_mapping
+
 event_loop() {
-	local input_type
-	while (( input_type != X_ERROR )); do
+	local input_type=1
+	while (( input_type != X_Error )); do
 		read8 input_type
 		handler=${event_handlers[input_type]}
 		[[ $handler ]] && $handler
@@ -354,54 +908,65 @@ handle_error() {
 	read16 error_major_op_code
 	read8 error_minor_op_code
 	readpad 21
+	
+	printf "Error: code=%d\n" $error_code >> bashwm.log
 }
-event_handlers[X_ERROR]=handle_error
+event_handlers[X_Error]=handle_error
 
 handle_reply() {
 	read8 reply_byte
 	read16 reply_seq_no
-	handler=${reply_handlers[reply_seq_no]}
+	handler=${request_map[reply_seq_no]}
 	[[ $handler ]] || die "Unexpected reply: sequence number = $reply_seq_no"
-	unset reply_handlers[reply_seq_no]
+	unset request_map[reply_seq_no]
 	$handler $reply_byte $reply_seq_no
 }
-event_handlers[X_REPLY]=handle_reply
+event_handlers[X_Reply]=handle_reply
 
 handle_motion_notify() {
+	echo "handle_motion_notify" >>bashwm.log
 }
-event_handlers[X_MOTION_NOTIFY]=handle_motion_notify
+event_handlers[X_MotionNotify]=handle_motion_notify
 
 handle_enter_notify() {
+	echo "handle_enter_notify" >>bashwm.log
 }
-event_handlers[X_ENTER_NOTIFY]=handle_enter_notify
+event_handlers[X_EnterNotify]=handle_enter_notify
 
 handle_destroy_notify() {
+	echo "handle_destroy_notify" >>bashwm.log
 }
-event_handlers[X_DESTROY_NOTIFY]=handle_destroy_notify
+event_handlers[X_DestroyNotify]=handle_destroy_notify
 
 handle_button_press() {
+	echo "handle_button_press" >>bashwm.log
 }
-event_handlers[X_BUTTON_PRESS]=handle_button_press
+event_handlers[X_ButtonPress]=handle_button_press
 
 handle_button_release() {
+	echo "handle_button_release" >>bashwm.log
 }
-event_handlers[X_BUTTON_RELEASE]=handle_button_release
+event_handlers[X_ButtonRelease]=handle_button_release
 
 handle_key_press() {
+	echo "handle_key_press" >>bashwm.log
 }
-event_handlers[X_KEY_PRESS]=handle_key_press
+event_handlers[X_KeyPress]=handle_key_press
 
 handle_map_request() {
+	echo "handle_map_request" >>bashwm.log
 }
-event_handlers[X_MAP_REQUEST]=handle_map_request
+event_handlers[X_MapRequest]=handle_map_request
 
 handle_focus_in() {
+	echo "handle_focus_in" >>bashwm.log
 }
-event_handlers[X_FOCUS_IN]=handle_focus_in
+event_handlers[X_FocusIn]=handle_focus_in
 
 handle_focus_out() {
+	echo "handle_focus_out" >>bashwm.log
 }
-event_handlers[X_FOCUS_OUT]=handle_focus_out
+event_handlers[X_FocusOut]=handle_focus_out
 
 
 
@@ -410,7 +975,7 @@ print_setup >&"$xfd"
 #i=0
 #while : ; do
 #	(( ++i ))
-#	read -d '' -n 1 -u $xfd char
+#	read -r -d '' -n 1 -u $xfd char
 #	printf '[ %d ] ' $?
 #	if [[ -z $char ]]; then
 #		printf '0\n'
@@ -450,4 +1015,21 @@ echo "height_pixels = ${screens[0-height_pixels]}"
 echo "width_mm = ${screens[0-width_mm]}"
 echo "height_mm = ${screens[0-height_mm]}"
 
+declare -A wm_keys=(
+	[$XK_1:$X_Mod4Mask]="select_desktop:1"
+	[$XK_1:$((X_Mod4Mask|X_ShiftMask))]="move_to_desktop:1"
+	[$XK_2:$X_Mod4Mask]="select_desktop:2"
+	[$XK_2:$((X_Mod4Mask|X_ShiftMask))]="move_to_desktop:2"
+	[$XK_3:$X_Mod4Mask]="desktop:3"
+	[$XK_3:$((X_Mod4Mask|X_ShiftMask))]="move_to_desktop:3"
+	[$XK_4:$X_Mod4Mask]="desktop:4"
+	[$XK_4:$((X_Mod4Mask|X_ShiftMask))]="move_to_desktop:4"
+	[$XK_Return:$X_Mod4Mask]="new_terminal"
+	[$XK_b:$X_Mod4Mask]="new_browser"
+	[$XK_p:$X_Mod4Mask]="show_menu"
+)
 
+#print_change_window_events >&"$xfd"
+print_get_keyboard_mapping >&"$xfd"
+
+event_loop >&"$xfd" <&"$xfd"
