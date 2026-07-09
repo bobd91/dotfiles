@@ -22,7 +22,7 @@ print_volume() {
 	local vol="$($vol_cmd)"
 	local wpstat
 
-	if [[ $vol =~ 'Volume: 1.00' ]]; then
+	if [[ -z $vol || $vol =~ 'Volume: 1.00' ]]; then
 		# may be actual 100% but ...
 		# may be dummy output or no selected device (no '*') on startup
 		# so check status for selected device that is not Dummy Output
@@ -33,12 +33,17 @@ print_volume() {
 			wpstat="$($stat_cmd | sed '/\*.*vol: 1.00/!'d)"
 		done
 		[[ $vol ]] || vol="$($vol_cmd)"
+		printf 'wpstat=<%s>\n' "$wpstat" >> vol.log
+		printf 'vol=<%s>\n' "$vol" >> vol.log
 	fi
 
 	[[ $vol =~ '[MUTED]' ]] && echo "$muted" && return
-	[[ $vol =~ 'Volume: 1.00' ]] && echo "$spkr 100%" && return
+	vol="${vol#*Volume: }"
+	hundreds="${vol%\.*}"
+	vol="${vol#*\.}"
+	(( $hundreds )) && vol="$hundreds$vol"
 
-	echo "$spkr ${vol#*\.}%"
+	echo "$spkr $vol%"
 
 }
 

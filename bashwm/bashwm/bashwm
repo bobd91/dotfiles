@@ -1,4 +1,7 @@
 #!/usr/bin/env bash
+
+dsp=${1:-${DISPLAY:1}}
+
 LC_CTYPE=C
 
 . bashwm_xvars
@@ -124,7 +127,7 @@ readxauth() {
 
 readxauth < "${XAUTHORITY:-~/.Xauthority}"
 
-exec {xfd}<>/dev/tcp/127.0.0.1/6000
+exec {xfd}<>/dev/tcp/127.0.0.1/$(( 6000+$dsp ))
 
 lsb_first="$(( 16#42 ))"
 msb_first="$(( 16#6C ))"
@@ -351,35 +354,35 @@ event_handlers[X_Reply]=handle_reply
 
 handle_motion_notify() {
 	# ignore for now
-	readpadd 31
+	readpad 31
 	echo "handle_motion_notify" >>bashwm.log
 }
 event_handlers[X_MotionNotify]=handle_motion_notify
 
 handle_enter_notify() {
 	# ignore for now
-	readpadd 31
+	readpad 31
 	echo "handle_enter_notify" >>bashwm.log
 }
 event_handlers[X_EnterNotify]=handle_enter_notify
 
 handle_destroy_notify() {
 	# ignore for now
-	readpadd 31
+	readpad 31
 	echo "handle_destroy_notify" >>bashwm.log
 }
 event_handlers[X_DestroyNotify]=handle_destroy_notify
 
 handle_button_press() {
 	# ignore for now
-	readpadd 31
+	readpad 31
 	echo "handle_button_press" >>bashwm.log
 }
 event_handlers[X_ButtonPress]=handle_button_press
 
 handle_button_release() {
 	# ignore for now
-	readpadd 31
+	readpad 31
 	echo "handle_button_release" >>bashwm.log
 }
 event_handlers[X_ButtonRelease]=handle_button_release
@@ -402,7 +405,7 @@ handle_key_press() {
 		mask="${keycmd%:*}"
 		(( mask == keymask )) || continue
 		cmd="${keycmd#*:}"
-		echo "$cmd" >> bashwm.log
+		$cmd
 		break
 	done
 }
@@ -410,25 +413,28 @@ event_handlers[X_KeyPress]=handle_key_press
 
 handle_map_request() {
 	# ignore for now
-	readpadd 31
+	readpad 31
 	echo "handle_map_request" >>bashwm.log
 }
 event_handlers[X_MapRequest]=handle_map_request
 
 handle_focus_in() {
 	# ignore for now
-	readpadd 31
+	readpad 31
 	echo "handle_focus_in" >>bashwm.log
 }
 event_handlers[X_FocusIn]=handle_focus_in
 
 handle_focus_out() {
 	# ignore for now
-	readpadd 31
+	readpad 31
 	echo "handle_focus_out" >>bashwm.log
 }
 event_handlers[X_FocusOut]=handle_focus_out
 
+new_terminal() {
+	DISPLAY=:$dsp setsid -f /usr/local/bin/terminal
+}
 
 
 send_setup >&"$xfd"
