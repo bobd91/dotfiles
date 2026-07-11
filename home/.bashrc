@@ -2,10 +2,6 @@
 # ~/.bashrc
 #
 
-# For LFS
-export LFS=/mnt/lfs
-umask 022
-
 # If not running interactively, don't do anything
 [[ $- != *i* ]] && return
 
