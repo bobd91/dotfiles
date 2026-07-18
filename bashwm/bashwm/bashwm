@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 
-dsp=${1:-${DISPLAY:1}}
-
-LC_CTYPE=C
-
-. bashwm_xvars
-
->| bashwm.log
-
 log() {
+	local c1=${1::1}
+	[[ $c1 == '<' || $c1 == '>' ]] && printf '\n' >> bashwm.log
 	printf "$@" >> bashwm.log
 }
 
 write8() {
-	local t=0
-	(( $1 )) && printf -v t '%x' "$(( $1 & 16#FF ))"
+	local t=00
+	(( $1 )) && printf -v t '%02x' "$(( $1 & 16#FF ))"
 	printf '%b' "\x$t"
+
+	log ' %s' $t
 }
 
 write16() {
@@ -55,6 +51,8 @@ writechars() {
 	local len=$1
 	local chars=$2
 	printf '%s' "$2"
+
+	log '%s' "$2"
 }
 
 writebytes() {
@@ -66,23 +64,28 @@ writebytes() {
 	for (( i=0 ; i<byte_count ; i++ )); do
 		b=$(( i*2 ))
 		printf '%b' "\x${bytes:b:2}"
+
+		log ' %s' "${bytes:b:2}"
 	done
 	# If len > byte_count pad with nulls
 	for (( i=byte_count ; i<len ; i++ )); do
 		printf '%b' '\x00'
+
+		log ' 00'
 	done
 }
 
 read8() {
 	local _t
 
-	(( read_count++ ))
 	IFS= read -r -d '' -n 1 _t
 	if [[ -n $_t ]]; then
 		printf -v "$1" '%d' "'$_t"
 	else
 		printf -v "$1" "0"
 	fi
+
+	log ' %02x' "'$_t"
 }
 
 read16() {
@@ -104,8 +107,9 @@ read32() {
 readchars() {
 	local _i _c _s
 
+	(( $1 )) || return
+
 	for (( _i=0 ; _i<$1 ; _i++ )); do
-		(( read_count++ ))
 		IFS= read -r -d '' -n 1 _c
 		if [[ -z $_c ]]; then
 			readpad $(( $1 - _i - 1 ))
@@ -114,13 +118,16 @@ readchars() {
 		_s="$_s$_c"
 	done
 	printf -v "$2" '%s' "$_s"
+
+	log ' %s' "$_s"
 }
 
 readbytes() {
 	local _i _c _b _s
 
+	(( $1 )) || return
+
 	for (( _i=0 ; _i<$1 ; _i++ )); do
-		(( read_count++ ))
 		IFS= read -r -d '' -n 1 _c
 		if [[ -z $_c ]]; then
 			_b='00'
@@ -132,14 +139,17 @@ readbytes() {
 	done
 
 	printf -v "$2" $_s
+
+	log ' %s' "$_s"
 }
 
 readpad() {
 	local pad i
 
 	for (( i=0 ; i<$1 ; i++ )); do
-		(( read_count++ ))
 		IFS= read -r -d '' -n 1 pad
+
+		log ' 00'
 	done
 }
 
@@ -150,12 +160,12 @@ readpad4() {
 readxauth() {
 	local proto=256
 	local addr="${HOSTNAME}"
-	local display="${DISPLAY#*:}"
-	local length
+	local display="${dsp#*:}"
+	local length=1
 
-	while [[ $xauth_proto != $proto ||
-			$xauth_addr != $addr ||
-			$xauth_display != $display ]]; do
+	while [[ $length != 0 && ($xauth_proto != $proto ||
+				  $xauth_addr != $addr ||
+				  $xauth_display != $display) ]]; do
 		read16 xauth_proto
 		read16 length
 		readchars $length xauth_addr
@@ -168,32 +178,29 @@ readxauth() {
 	done
 }
 
-
-readxauth < "${XAUTHORITY:-~/.Xauthority}"
-
-exec {xfd}<>/dev/tcp/127.0.0.1/$(( 6000+$dsp ))
-
-lsb_first="$(( 16#42 ))"
-msb_first="$(( 16#6C ))"
-proto_major=11
-proto_minor=0
-
-
 send_setup() {
+	local lsb_first="$(( 16#42 ))"
+	local name_len=${#xauth_name}
+	local data_len=${#xauth_data}
+
+	log '> Setup Request\n'
+
 	write8 $lsb_first
 	writepad 1
 	write16 $proto_major
 	write16 $proto_minor
-	write16 18
-	write16 16
+	write16 $name_len
+	write16 $data_len
 	writepad 2
-	writechars 18 "$xauth_name"
-	writepad4 18
-	writebytes 16 "$xauth_data"
-	writepad4 16
+	writechars $name_len "$xauth_name"
+	writepad4 $name_len
+	writebytes $data_len "$xauth_data"
+	writepad4 $data_len
 }
 
 read_setup_leader() {
+	log '< Setup Leader\n'
+
 	read8 setup_success
 	read8 setup_length
 	read16 proto_major
@@ -202,22 +209,25 @@ read_setup_leader() {
 }
 
 read_setup_failure() {
+	log '< Setup Failure\n'
+
 	readchars $setup_length setup_failure_reason
 	readpad "$(( extra_length * 4 - setup_length ))"
 }
 
-declare -A screens
-
-count_reads() {
-	read_count=0
-	while : ;do
-		local foo
-		read8 'foo'
-		printf '%02x ' $foo
-	done
-}
-
 read_setup_ok() {
+	local release_number resource_id_base resource_id_mask 
+	local motion_buffer_size vendor_length max_request_length
+	local no_of_screens no_of_formats image_byte_order bitmap_byte_order
+	local bitmap_scanline_unit bitmap_scanline_pad min_keycode max_keycode
+	local vendor i root colormap white_pixel black_pixel input_masks
+	local width_pixels height_pixels width_mm height_mm min_maps max_maps
+	local visual_id backing_stores save_unders root_depth no_of_depths
+	local d depth no_of_visuals v class bits_per_rgb colormaps
+	local red_mask green_mask blue_mask
+
+	log '< Setup OK\n'
+
 	read32 release_number
 	read32 resource_id_base
 	read32 resource_id_mask
@@ -237,49 +247,49 @@ read_setup_ok() {
 	readpad4 $vendor_length
 	readpad $(( 8 * no_of_formats ))
 
-	read_count=0
+	declare -Ag "server=(\
+		resource_id_base $resource_id_base \
+		resource_id_mask $resource_id_mask \
+		no_of_screens $no_of_screens \
+		min_keycode $min_keycode \
+		max_keycode $max_keycode)"
 
 	for (( i=0 ; i<no_of_screens ; i++ )); do
-		read32 root && screens[$i-root]=$root
-		read32 colormap && screens[$i-colormap]=$colormap
-		read32 white_pixel && screens[$i-white_pixel]=$white_pixel
-		read32 black_pixel && screens[$i-black_pixel]=$black_pixel
-		read32 input_masks && screens[$i-input_masks]=$input_masks
-		read16 width_pixels && screens[$i-width_pixels]=$width_pixels
-		read16 height_pixels && screens[$i-height_pixels]=$height_pixels
-		read16 width_mm && screens[$i-width_mm]=$width_mm
-		read16 height_mm && screens[$i-height_mm]=$height_mm
-		read16 min_maps && screens[$i-min_maps]=$min_maps
-		read16 max_maps && screens[$i-max_maps]=$max_maps
-		read32 visual_id && screens[$i-root_visual]=$root_visual
-		read8 backing_stores && screens[$i-backing_stores]=$backing_stores
-		read8 save_unders && screens[$i-save_unders]=$save_unders
-		read8 root_depth && screens[$i-root_depth]=$root_depth
-		read8 no_of_depths && screens[$i-no_of_depths]=$no_of_depths
+		read32 root
+		read32 colormap
+		read32 white_pixel
+		read32 black_pixel
+		read32 input_masks
+		read16 width_pixels
+		read16 height_pixels
+		read16 width_mm
+		read16 height_mm
+		read16 min_maps
+		read16 max_maps
+		read32 visual_id
+		read8 backing_stores
+		read8 save_unders
+		read8 root_depth
+		read8 no_of_depths
+
+		declare -Ag "screen_$i=( \
+			root $root \
+			width_pixels $width_pixels \
+			height_pixels $height_pixels)"
+
 		for (( d=0 ; d<no_of_depths ; d++ )); do
-			pfx=$i,$d
 			read8 depth
-			screens[$pfx-depth]=$depth
 			readpad 1
 			read16 no_of_visuals
-			screens[$pfx-no_of_visuals]=$no_of_visuals
 			readpad 4
 			for (( v=0 ; v<no_of_visuals ; v++ )); do
 				read32 visual_id
-				pfx=$i,$d,$v
-				screens[$pfx-visual_id]=$visual_id
 				read8 class
-				screens[$pfx-class]=$class
 				read8 bits_per_rgb
-				screens[$pfx-bits_per_rgb]=$bits_per_rgb
 				read16 colormaps
-				screens[$pfx-colormaps]=$colormaps
 				read32 red_mask
-				screens[$pfx-red_mask]=$red_mask
 				read32 green_mask
-				screens[$pfx-green_mask]=$green_mask
 				read32 blue_mask
-				screens[$pfx-blue_mask]=$blue_mask
 				readpad 4
 			done
 		done
@@ -298,21 +308,27 @@ beginrequest() {
 	write16 $req_length
 	[[ $handler ]] && request_map[sequence_number & 16#FFFF]=$handler 
 
-	log 'Request %s %s (%s)\n' $opcode $req_length $sequence_number
+	log '> Request %s %s (%s)\n' $opcode $req_length $sequence_number
 }
 
 send_change_window_events() {
-	local window=$1
+	local windowid=$1
 	local mask=$2
 
+	log '> Change Window Events %s\n' $windowid
+
 	beginrequest $X_ChangeWindowAttributes 0 4
-	write32 $window
+	write32 $windowid
 	write32 $X_CWEventMask
 	write32 $mask
 }
 
 send_get_keyboard_mapping() {
+	local min_keycode=${server[min_keycode]}
+	local max_keycode=${server[max_keycode]}
+
 	log '> GetKeyboardMapping\n'
+
 	beginrequest $X_GetKeyboardMapping 0 2
 	write8 $min_keycode
 	write8 $(( 1 + max_keycode - min_keycode ))
@@ -320,12 +336,13 @@ send_get_keyboard_mapping() {
 }
 
 send_grab_key() {
-	log '> GrabKey %s %s\n' $mask $keycode
 	local keycode=$1
 	local mask=$2
 
+	log '> GrabKey %s %s\n' $mask $keycode
+
 	beginrequest $X_GrabKey 0 4
-	write32 $root
+	write32 ${screen_0[root]}
 	write16 $mask
 	write8 $keycode
 	write8 1
@@ -334,42 +351,60 @@ send_grab_key() {
 }
 
 send_set_border_color() {
-	log "> SetBorderColor $1 $2\n"
-	local window=$1
+	local windowid=$1
 	local border_pixel=$2
 
+	log '> SetBorderColor %s\n' $windowid
+
 	beginrequest $X_ChangeWindowAttributes 0 4 
-	write32 $window
+	write32 $windowid
 	write32 $X_CWBorderPixel
 	write32 $border_pixel
 }
 
 send_set_window_pos() {
-	log '> SetWindowPos\n'
-	local window=$1
-	local x=$2
-	local y=$3
-	local width=$4
-	local height=$5
-	local border_width=$6
+	local windowid=$1
+	local -n window="window_$windowid"
+	local x=${2:-${window[old_x]}}
+	local y=${3:-${window[old_y]}}
+	local width=${4:-${window[old_width]}}
+	local height=${5:-${window[old_height]}}
+	local border_width=${6:-$wm_border_width}
+	local stacking_order=$7
 
+	log '> SetWindowPos %s\n' $windowid
+
+	window[old_x]=${window[x]}
+	window[old_y]=${window[y]}
+	window[old_width]=${window[width]}
+	window[old_height]=${window[height]}
+	window[x]=x
+	window[y]=y
+	window[width]=width
+	window[height]=height
+	window[border_width]=$border_width
+
+	mask=$(( X_CWX | X_CWY | X_CWWidth | X_CWHeight | X_CWBorderWidth ))
+	(( $stacking_order )) && (( mask |= X_CWStackMode ))
 	beginrequest $X_ConfigureWindow 0 8
-	write32 $window
-	write16 $(( X_CWX | X_CWY | X_CWWidth | X_CWHeight | X_CWBorderWidth ))
+	write32 $windowid
+	write16 $mask
 	writepad 2
 	write32 $(( x - border_width ))
 	write32 $(( y - border_width ))
 	write32 $(( width - (2 * border_width) ))
 	write32 $(( height - (2 * border_width) ))
 	write32 $border_width
+	(( $stacking_order )) && write32 $stacking_order
 }
 
 send_map_window() {
-	log '> MapWindow\n'
-	local window=$1
+	local windowid=$1
+
+	log '> MapWindow %s\n' $windowid
 
 	beginrequest $X_MapWindow 0 2
-	write32 $window
+	write32 $windowid
 }
 
 send_intern_atom() {
@@ -378,6 +413,8 @@ send_intern_atom() {
 	local name_pad=$(pad4 name_len)
 	local req_len=$(( 2 + (name_len + name_pad) / 4 ))
 	
+	log '> InternAtom %s\n' $name
+
 	beginrequest $X_InternAtom 0 $req_len "read_intern_atom $name"
 	write16 $name_len
 	writepad 2
@@ -387,9 +424,13 @@ send_intern_atom() {
 
 read_keyboard_mapping() {
 	local keysyms_per=$1
+	local min_keycode=${server[min_keycode]}
+	local max_keycode=${server[max_keycode]}
 	local keycodes=$(( 1 + max_keycode - min_keycode ))
 	local key_mappings=$(( keysyms_per * keycodes ))
 	local keycode keycodesym keycmds keycmda keycmd mask
+
+	log '< Keyboard Mapping\n'
 
 	read32 reply_length
 	(( reply_length == key_mappings )) ||
@@ -415,17 +456,16 @@ read_keyboard_mapping() {
 		done
 	done
 }
-reply_handlers[X_GetKeyboardMapping]=read_keyboard_mapping
 
-declare -A atoms
-current_desktop=0
-desktop_count=4
 read_intern_atom() {
 	local name=$1
+	local root=${screen_0[root]}
 
 	readpad 4
 	read32 atom
 	readpad 20
+
+	log '< Atom %s = %d\n' $name $atom
 
 	[[ ${name::1} == '_' ]] || name="_$name"
 
@@ -433,29 +473,34 @@ read_intern_atom() {
 
 	case $name in
 		_NET_CURRENT_DESKTOP) 
-			send_change_property $root $atom $XA_CARDINAL 32 1 $current_desktop 
+			send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 1 $current_desktop 
 			;;
 		_NET_NUMBER_OF_DESKTOPS) 
-			send_change_property $root $atom $XA_CARDINAL 32 1 $desktop_count
+			send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 1 $desktop_count
 			;;
+		_NET_DESKTOP_VIEWPORT)
+			send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 2 0 0
 	esac
 }
 
 send_change_property() {
-	local window=$1
-	local prop_atom=$2
-	local prop_type=$3
-	local prop_bits=$4
-	local prop_count=$5
+	local windowid=$1
+	local mode=$2
+	local prop_atom=$3
+	local prop_type=$4
+	local prop_bits=$5
+	local prop_count=$6
 	local bytes=$(( prop_count * prop_bits / 8 ))
 	local pad=$(pad4 $bytes)
 	local req_len=$(( 6 + (bytes + pad) / 4 ))
 
-	shift 5
+	shift 6
 	local prop_value=( $@ )
 
-	beginrequest $X_ChangeProperty $X_PropModeReplace $req_len
-	write32 $window
+	log '> Change Property %s for window %s\n' $prop_atom $windowid
+
+	beginrequest $X_ChangeProperty $mode $req_len
+	write32 $windowid
 	write32 $prop_atom
 	write32 $prop_type
 	write8 $prop_bits
@@ -473,14 +518,15 @@ send_change_property() {
 }
 
 send_get_property() {
-	local window=$1
+	local windowid=$1
 	local atom=$2
 	local atom_type=$3
 	local length=$4
 	local start=${5:-0}
 
-	beginrequest $X_GetProperty 0 6 "read_get_property $window $atom $start"
-	write32 $window
+	log '> Get property %d for window %d\n' $atom $windowid
+	beginrequest $X_GetProperty 0 6 "read_get_property $windowid $atom $start"
+	write32 $windowid
 	write32 $atom
 	write32 $atom_type
 	write32 $start
@@ -489,7 +535,7 @@ send_get_property() {
 
 
 read_get_property() {
-	local window=$1
+	local windowid=$1
 	local atom=$2
 	local start=$3
 	local format=$4
@@ -502,9 +548,11 @@ read_get_property() {
 	read32 length
 	readpad 12
 
+	log '< Property %d for window %d, length %d\n' $atom $windowid $length
+
 	(( $length  )) || return
 
-	local -n window="window_$window"
+	local -n window="window_$windowid"
 
 	if (( $start )); then
 		val=" ${window[$atom]}"
@@ -530,15 +578,17 @@ read_get_property() {
 	(( start += byte_count ))
 	(( bytes_after -= byte_count ))
 
-	send_get_property $window $atom $atom_type $bytes_after $start
+	send_get_property $windowid $atom $atom_type $bytes_after $start
 }
 
 send_delete_property() {
-	local window=$1
+	local windowid=$1
 	local atom=$2
 
+	log '> Delete property %s for window %s\n' $atom $windowid
+
 	beginrequest $X_DeleteProperty 0 3
-	write32 $window
+	write32 $windowid
 	write32 $atom
 }
 
@@ -547,21 +597,21 @@ allocate_id() {
 		(( last_id++ ))
 	else
 		last_id=1
-		while (( ! last_id & resource_id_mask )); do
+		while (( ! last_id & ${server[resource_id_mask]} )); do
 			(( last_id <<= 1))
 		done
 	fi
 
-	echo $(( resource_id_base | last_id ))
+	echo $(( ${server[resource_id_base]} | last_id ))
 }
 
 add_check_window() {
-	check_window=$(allocate_id)
-	log 'Check window id=%s\n' $check_window
+	check_windowid=$(allocate_id)
+	log '> Check window id=%s\n' $check_windowid
 
 	beginrequest $X_CreateWindow 0 8
-	write32 $check_window
-	write32 $root
+	write32 $check_windowid
+	write32 ${screen_0[root]}
 	write16 0
 	write16 0
 	write16 1
@@ -574,13 +624,14 @@ add_check_window() {
 
 set_check_window_props() {
 	local supported
+	local root=${screen_0[root]}
 
-	send_change_property $check_window $XA_NET_SUPPORTING_WM_CHECK \
-		$XA_WINDOW 32 1 $check_window
-	send_change_property $check_window $XA_NET_WM_NAME \
-		$XA_UTF8_STRING 8 6 'bashwm'
-	send_change_property $root $XA_NET_SUPPORTING_WM_CHECK \
-		$XA_WINDOW 32 1 $check_window
+	send_change_property $check_windowid $X_PropModeReplace \
+		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $check_windowid
+	send_change_property $check_windowid $X_PropModeReplace \
+		$XA_NET_WM_NAME $XA_UTF8_STRING 8 6 'bashwm'
+	send_change_property $root $X_PropModeReplace \
+		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $check_windowid
 	send_delete_property $root $XA_NET_CLIENT_LIST
 
 	supported=( $XA_NET_CURRENT_DESKTOP $XA_NET_NUMBER_OF_DESKTOPS \
@@ -590,9 +641,8 @@ set_check_window_props() {
 		$XA_NET_WM_WINDOW_TYPE_DOCK $XA_NET_WM_WINDOW_TYPE_NORMAL \
 		$XA_NET_CLIENT_LIST )
 
-	send_change_property $root $XA_NET_SUPPORTED \
+	send_change_property $root $X_PropModeReplace $XA_NET_SUPPORTED \
 		$XA_ATOM 32 ${#supported[@]} ${supported[@]}
-	
 }
 
 event_loop() {
@@ -600,12 +650,12 @@ event_loop() {
 	while (( input_type != X_Error )); do
 		read8 input_type
 
-		log '< InputType %s\n' $input_type
 		handler=${event_handlers[input_type & 16#7F]}
 		if [[ $handler ]]; then
 			log '< %s\n' $handler
 			$handler $input_type
 		else
+			log '< No handler for InputType %s\n' $input_type
 			# discard unwanted event data
 			readpad 31
 		fi
@@ -621,7 +671,6 @@ handle_error() {
 	read8 error_minor_op_code
 	readpad 21
 }
-event_handlers[X_Error]=handle_error
 
 handle_reply() {
 	read8 reply_byte
@@ -629,12 +678,11 @@ handle_reply() {
 	handler=${request_map[reply_seq_no]}
 	[[ $handler ]] || die "Unexpected reply: sequence number = $reply_seq_no"
 	unset request_map[reply_seq_no]
-	log 'Reply %s (%s)\n' "$handler" "$reply_seq_no" 
+	log '< Reply %s (%s)\n' "$handler" "$reply_seq_no" 
 	$handler $reply_byte $reply_seq_no
 
 	handle_after_reply $reply_seq_no
 }
-event_handlers[X_Reply]=handle_reply
 
 handle_after_reply() {
 	local seq_no=$1
@@ -649,6 +697,7 @@ handle_after_reply() {
 			declare -a cmd="$action"
 			"${cmd[@]}"
 		done
+		unset after_replies[seq_no]
 	fi
 }
 
@@ -662,19 +711,18 @@ count_bits() {
 }
 
 handle_configure_notify() {
-	local window
+	local windowid
 	readpad 7
-	read32 window
+	read32 windowid
 	readpad 20
 
-	log 'ConfigureNotify for window %s\n' $window
+	log '< ConfigureNotify for window %s\n' $windowid
 }
-event_handlers[X_ConfigureNotify]=handle_configure_notify
 
 handle_create_notify() {
-	local window x y width height border_width override_redirect
+	local windowid x y width height border_width override_redirect
 	readpad 7
-	read32 window
+	read32 windowid
 	read16 x
 	read16 y
 	read16 width
@@ -683,35 +731,42 @@ handle_create_notify() {
 	read8 override_redirect
 	readpad 9
 
-	log 'CreateNotify for window %s, override_redirect %s\n' $window $override_redirect
+	log '< CreateNotify for window %s, override_redirect %s\n' $windowid $override_redirect
 
 	(( override_redirect )) && return
 
-	[[ $window == $check_window ]] && set_check_window_props
+	local index=${#windows[@]}
+	windows+=( $windowid )
 
-	declare -Ag "window_$window=(x $x y $y width $width height $height border_width $border_width)"
+	declare -Ag "window_$windowid=( \
+		index $index \
+		x $x \
+		y $y \
+		width $width \
+		height $height \
+		border_width $border_width)"
+	
+	[[ $windowid == $check_windowid ]] && set_check_window_props
 }
-event_handlers[X_CreateNotify]=handle_create_notify
 
 handle_map_notify() {
-	local window override_redirect
+	local windowid override_redirect
 	readpad 7
-	read32 window
+	read32 windowid
 	read8 override_redirect
 	readpad 19
 
-	log 'MapNotify for window %s, override_redirect %s\n' $window $override_redirect
+	log '< MapNotify for window %s, override_redirect %s\n' $windowid $override_redirect
 }
-event_handlers[X_MapNotify]=handle_map_notify
 
 handle_configure_request() {
-	local stack_mode parent window sibling 
+	local stack_mode parent window windowid sibling 
 	local x y width height border_width value_mask n
 
 	read8 stack_mode
 	readpad 2
 	read32 parent
-	read32 window
+	read32 windowid
 	read32 sibling
 	read16 x
 	read16 y
@@ -721,71 +776,79 @@ handle_configure_request() {
 	read16 value_mask
 	readpad 4
 
-	log 'ConfigureRequest for window %s\n' $window
+	log '> ConfigureWindow %s\n' $windowid
 
-	local -n win="window_$window"
+	local -n window="window_$windowid"
 
 	n=$(count_bits $value_mask)
-	beginrequest X_ConfigureWindow 0 $(( 3+n ))
-	write32 $window
+	beginrequest $X_ConfigureWindow 0 $(( 3+n ))
+	write32 $windowid
 	write16 $value_mask
 	writepad 2
 	(( $value_mask & $X_CWX )) && 
 		write32 $x && 
-		win[x]=$x
+		window[x]=$x
 	(( $value_mask & $X_CWY )) && 
 		write32 $y && 
-		win[y]=$y
+		window[y]=$y
 	(( $value_mask & $X_CWWidth )) && 
 		write32 $width &&
-		win[width]=$width
+		window[width]=$width
 	(( $value_mask & $X_CWHeight )) &&
 		write32 $height &&
-		win[height]=$height
+		window[height]=$height
 	(( $value_mask & $X_CWBorderWidth )) &&
 		write32 $border_width &&
-		win[border_width]=$border_width
+		window[border_width]=$border_width
 	(( $value_mask & $X_CWSibling )) && 
 		write32 $sibling
 	(( $value_mask & $X_CWStackMode )) && 
 		write32 $stack_mode
 }
-event_handlers[X_ConfigureRequest]=handle_configure_request
+
+handle_property_notify() {
+	local windowid atom state
+
+	readpad 3
+	read32 windowid
+	read32 atom
+	readpad 4
+	read8 state
+	readpad 15
+
+	log '< PropertyNotify for window %s, atom %s, state %s\n' \
+		$windowid $atom $state
+}
 
 handle_motion_notify() {
 	# ignore for now
 	readpad 31
-	log "handle_motion_notify"
+	log "< handle_motion_notify"
 }
-event_handlers[X_MotionNotify]=handle_motion_notify
 
 handle_enter_notify() {
 	# ignore for now
 	readpad 31
-	log 'handle_enter_notify\n'
+	log '< handle_enter_notify\n'
 }
-event_handlers[X_EnterNotify]=handle_enter_notify
 
 handle_destroy_notify() {
 	# ignore for now
 	readpad 31
-	log 'handle_destroy_notify\n'
+	log '< handle_destroy_notify\n'
 }
-event_handlers[X_DestroyNotify]=handle_destroy_notify
 
 handle_button_press() {
 	# ignore for now
 	readpad 31
-	log 'handle_button_press\n'
+	log '< handle_button_press\n'
 }
-event_handlers[X_ButtonPress]=handle_button_press
 
 handle_button_release() {
 	# ignore for now
 	readpad 31
-	log 'handle_button_release\n'
+	log '< handle_button_release\n'
 }
-event_handlers[X_ButtonRelease]=handle_button_release
 
 handle_key_press() {
 	local keycode keymask keycode_cmd keycmd mask cmd
@@ -794,6 +857,8 @@ handle_key_press() {
 	readpad 26
 	read16 keymask
 	readpad 2
+
+	log '< Key press %s\n' $keycode
 
 	keycode_cmd="${keycode_command_map[keycode]}" 
 	[[ $keycode_cmd ]] || return 0
@@ -807,15 +872,10 @@ handle_key_press() {
 		break
 	done
 }
-event_handlers[X_KeyPress]=handle_key_press
 
 add_window() {
-	local x=0
-	local y=0
-	local width=$width_pixels
-	local height=$height_pixels
-
-	echo $x $y $width $height
+	echo ${screen_0[wa_x]} ${screen_0[wa_y]} \
+		${screen_0[wa_width} ${screen_0[wa_height]}
 }
 
 after_reply() {
@@ -828,86 +888,222 @@ after_reply() {
 
 
 handle_map_request() {
-	local window
+	local windowid
 
 	readpad 7
-	read32 window
+	read32 windowid
 	readpad 20
 
-	log 'MapRequest for window %s\n' $window
+	log '< MapRequest for window %s\n' $windowid
 
-	if [[ ! -v "window_$window"[$XA_NET_WM_WINDOW_TYPE] ]]; then
-		send_get_property $window $XA_NET_WM_WINDOW_TYPE $XA_ATOM 1
-		send_get_property $window $XA_NET_WM_STRUT_PARTIAL $XA_CARDINAL 12
-		send_get_property $window $XA_WM_TRANSIENT_FOR $XA_WINDOW 1
-		send_get_property $window $XA_WM_NORMAL_HINTS $XA_WM_SIZE_HINTS 18
-		send_get_property $window $XA_WM_HINTS $XA_WM_HINTS 9
-		after_reply map_window $window
-		send_change_window_events $window $client_events
+	if [[ ! -v "window_$windowid"[XA_NET_WM_WINDOW_TYPE] ]]; then
+		send_get_property $windowid $XA_NET_WM_WINDOW_TYPE $XA_ATOM 1
+		send_get_property $windowid $XA_NET_WM_STRUT_PARTIAL $XA_CARDINAL 12
+		send_get_property $windowid $XA_WM_TRANSIENT_FOR $XA_WINDOW 1
+		send_get_property $windowid $XA_WM_NORMAL_HINTS $XA_WM_SIZE_HINTS 18
+		send_get_property $windowid $XA_WM_HINTS $XA_WM_HINTS 9
+		after_reply map_window $windowid
+		send_change_window_events $windowid $client_events
 	else
-		map_window $window
+		map_window $windowid
 	fi
 }
-event_handlers[X_MapRequest]=handle_map_request
+
+log_window() {
+	local -n window="window_$1"
+	local k
+
+	log '%s\n' "window $1"
+	for k in ${!window[@]}; do
+		log '  [%s] = %s\n' $k "${window[$k]}"
+	done
+}
+
+max() {
+	(( $1 > $2 )) && echo $1 && return
+	echo $2
+}
+
+layout_desktop() {
+	:
+}
+
+recalculate_workarea() {
+	local left=0 right=0 top=0 bottom=0
+	local x=0 y=0
+	local width=${screen_0[width_pixels]}
+	local height=${screen_0[height_pixels]}
+	local root=${screen_0[root]}
+	local sstrut strut
+
+	for sstrut in "${struts[@]}"; do
+		log 'Strut: %s\n' $sstrut
+		strut=( $sstrut )
+		left=$(max left strut[0])
+		right=$(max right strut[1])
+		top=$(max top strut[2])
+		bottom=$(max bottom strut[3])
+	done
+	(( x += left ))
+	(( y += top ))
+	(( width -= left + right ))
+	(( height -= top + bottom ))
+	
+	log 'Work Area: x=%d y=%d width=%d height=%d\n' $x $y $width $height
+
+	screen_0[wa_x]=$x
+	screen_0[wa_y]=$y
+	screen_0[wa_width]=$width
+	screen_0[wa_height]=$height
+
+	send_change_property $root $X_PropModeReplace \
+		$XA_NET_WORKAREA $XA_CARDINAL 32 4 \
+		$x $y $width $height
+
+	layout_desktop
+}
 
 map_window() {
-	local window=$1
-	pos=( $(add_window) )
-	send_set_border_color $window $(( 16#005577 )) # $focus_border
-	send_set_window_pos $window ${pos[@]} 2 #$border_width
-	send_map_window $window
+	local windowid=$1
+	local root=${screen_0[root]}
+	local pos
+	local -n window="window_$windowid"
+
+	log_window $windowid
+
+	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
+		struts[windowid]=${window[$XA_NET_WM_STRUT_PARTIAL]}
+		window[desktop]=$(( 16#FFFF ))
+		recalculate_workarea
+	elif [[ ${window[$XA_NET_WM_WINDOW_TYPE]} ]] && 
+		(( ${window[$XA_NET_WM_WINDOW_TYPE]} == XA_NET_WM_WINDOW_TYPE_NORMAL )); then
+		pos=( $(add_window $windowid) )
+		send_set_border_color $windowid $bashwm_active_border
+		send_set_window_pos $windowid ${pos[@]}
+	fi
+	(( window[desktop] |= (1 << current_desktop) ))
+
+	send_map_window $windowid
+	send_change_property $root $X_PropModeAppend $XA_NET_CLIENT_LIST \
+		$XA_WINDOW 32 1 $windowid
 }
 
 handle_unmap_notify() {
-	local window
+	local windowid
 
 	readpad 7
-	read32 window
+	read32 windowid
 	readpad 20
 
-	log 'UnmapNotify for window %s\n' $window
+	log '< UnmapNotify for window %s\n' $windowid
 
-	remove_window $window
+	# remove_window $windowid
 }
 
 
 handle_focus_in() {
 	# ignore for now
 	readpad 31
-	log 'handle_focus_in\n'
+	log '< handle_focus_in\n'
 }
-event_handlers[X_FocusIn]=handle_focus_in
 
 handle_focus_out() {
 	# ignore for now
 	readpad 31
-	log 'handle_focus_out\n'
+	log '< handle_focus_out\n'
 }
-event_handlers[X_FocusOut]=handle_focus_out
+
+change_window_state() {
+	local windowid=$1
+	local prop=$2
+	local action=${3:-$X_NET_WM_STATE_TOGGLE}
+	local is_present if_present if_absent
+
+	local -n window="window_$windowid"
+	local state=${window[state]}
+
+	case $action in
+		$X_NET_WM_STATE_REMOVE ) if_present=1  ;;
+		$X_NET_WM_STATE_ADD )    if_absent=1   ;;
+		$X_NET_WM_STATE_TOGGLE ) if_present=1; if_absent=1 ;;
+		* ) fail "Invalid change_window_state action %s\n" $action
+	esac
+	
+	[[ $state =~ " $prop " ]] && is_present=1
+	(( if_present && is_present )) && state="${state/ $prop/}"
+	(( if_absent && ! is_present )) && state+=" $prop "
+	
+	window[state]=$state
+}
+
+update_window_state() {
+	local windowid=$1
+	local action=$2
+	local props=( $3 $4 )
+	local prop
+
+	for prop in ${props[@]}; do
+		(( prop == X_NET_WM_STATE_FULLSCREEN )) || continue
+		change_window_state $windowid $prop $action
+	done
+}
+
+update_fullscreen() {
+	local windowid=$1
+	local is_fullscreen
+	local want_fullscreen=0
+	local fs_prop=$X_NET_WM_STATE_FULLSCREEN
+	local -n window="window_$windowid"
+
+	is_fullscreen=$(( ${window[fullscreen]} ))
+	[[ ${window[state]} =~ " $fs_prop " ]] && want_fullscreen=1
+
+	if (( ! is_fullscreen && want_fullscreen )); then
+		send_set_window_pos $windowid \
+			0 0 \
+			${screen_0[width_pixels]} ${screen_0[height_pixels]} \
+			0 $X_Above
+		window[fullscreen]=1
+	elif (( is_fullscreen && ! want_fullscreen )); then
+		send_set_window_pos $windowid
+		window[fullscreen]=0
+	fi
+}
 
 handle_client_message() {
-	local format window atom 
-	local value=0
+	local format windowid atom i num_values
+	local values=()
 
 	read8 format
 	readpad 2
-	read32 window
+	read32 windowid
 	read32 atom
-	case $format in
-		8) read8 value; readpad 19 ;;
-		16) read16 value; readpad 18 ;;
-		32) read32 value; readpad 16 ;;
-		*) log 'Bad client message format %s\n' $format; readpad 20 ;;
+
+	num_values=$(( 160 / format ))
+	for (( i=0 ; i<num_values ; i++ )); do
+		read$format value
+		values[i]=$value
+	done
+	log '< ClientMessage %s %s %s [0]=%s [1]=%s ...\n' \
+			$format $windowid $atom ${values[0]} ${values[1]}
+	case $atom in
+	$XA_NET_CURRENT_DESKTOP) 
+		select_desktop ${values[0]} 
+		;;
+	$XA_NET_STATE) 
+		update_window_state $windowid \
+			${values[0]} ${values[1]} ${values[2]}
+		update_fullscreen $windowid
+		;;
 	esac
-	log 'ClientMessage %s %s %s %s\n' $format $window $atom $value
-	(( atom == XA_NET_CURRENT_DESKTOP )) && select_desktop $value
 }
-event_handlers[X_ClientMessage]=handle_client_message
 
 intern_atoms() {
 	send_intern_atom UTF8_STRING
 	send_intern_atom _NET_CURRENT_DESKTOP
 	send_intern_atom _NET_NUMBER_OF_DESKTOPS
+	send_intern_atom _NET_DESKTOP_VIEWPORT
+	send_intern_atom _NET_WORKAREA
 	send_intern_atom _NET_SUPPORTED
 	send_intern_atom _NET_ACTIVE_WINDOW
 	send_intern_atom _NET_SUPPORTING_WM_CHECK
@@ -916,18 +1112,18 @@ intern_atoms() {
 	send_intern_atom _NET_WM_STATE_FULLSCREEN
 	send_intern_atom _NET_WM_WINDOW_TYPE
 	send_intern_atom _NET_WM_WINDOW_TYPE_NORMAL
-	send_intern_atom _NET_WM_WINDOW_TYPE_DOCK
-	send_intern_atom _NET_WM_STRUCT_PARTIAL
+	send_intern_atom _NET_WM_STRUT_PARTIAL
 	send_intern_atom _NET_CLIENT_LIST
 }
 
 select_desktop() {
 	local desktop=$1
+	local root=${screen_0[root]}
 
 	[[ $current_desktop != $desktop ]] || return
 
-	send_change_property $root $XA_NET_CURRENT_DESKTOP \
-		$XA_CARDINAL 32 1 $desktop
+	send_change_property $root $X_PropModeReplace \
+		$XA_NET_CURRENT_DESKTOP $XA_CARDINAL 32 1 $desktop
 	
 	hide_desktop $current_desktop
 	current_desktop=$desktop
@@ -963,53 +1159,65 @@ show_menu() {
 	spawn /usr/local/bin/dmenu
 }
 
+run() {
+	readxauth < "${XAUTHORITY:-~/.Xauthority}"
 
-send_setup >&"$xfd"
+	exec {xfd}<>/dev/tcp/127.0.0.1/$(( 6000+$dsp ))
 
-#i=0
-#while : ; do
-#	(( ++i ))
-#	read -r -d '' -n 1 -u $xfd char
-#	printf '[ %d ] ' $?
-#	if [[ -z $char ]]; then
-#		printf '0\n'
-#	else
-#		printf '%d\n' "'${char}"
-#	fi
-#done
-#exit 0
+	send_setup >&"$xfd"
+	read_setup_leader <&"$xfd"
 
-read_setup_leader <&"$xfd"
+	if (( $setup_success != 1 )); then
+		read_setup_failure <&"$xfd"
 
-if (( $setup_success != 1 )); then
-	read_setup_failure <&"$xfd"
+		printf 'Setup Failed '
+		(( $setup_success == 2 )) && printf '(Auth) '
+		printf ': %s\n' "$setup_failure_reason"
+		exit $setup_success
+	fi
 
-	printf 'Setup Failed '
-	(( $setup_success == 2 )) && printf '(Auth) '
-	printf ': %s\n' "$setup_failure_reason"
-	exit $setup_success
-fi
+	read_setup_ok <&"$xfd"
 
-printf 'extra_length = $extra_length\n'
+	intern_atoms >&"$xfd"
+	send_get_keyboard_mapping >&"$xfd"
+	send_change_window_events ${screen_0[root]} $root_events >&"$xfd"
+	add_check_window >&"$xfd"
 
-read_setup_ok <&"$xfd"
+	event_loop >&"$xfd" <&"$xfd"
 
-printf 'read_count = $read_count\n'
+	if (( $error_code )); then
+		printf 'Error code: %d\n' $error_code
+		printf 'Error seq_no: %d\n' $error_seq_no
+		printf 'Error data: %04x\n' $error_data
+		printf 'Error op code: %d:%d\n' $error_major_op_code $error_minor_op_code
+	fi
+}
 
-printf 'release number = $release_number\n'
-printf 'max_request_length = $max_request_length\n'
-printf 'vendor_length = $vendor_length\n'
-printf 'vendor = $vendor\n'
-printf 'screens = $no_of_screens\n'
-printf 'formats = $no_of_formats\n'
-printf 'keycodes = $min_keycode .. $max_keycode\n'
+dsp=${1:-${DISPLAY:1}}
 
-printf 'width_pixels = ${screens[0-width_pixels]}\n'
-printf 'height_pixels = ${screens[0-height_pixels]}\n'
-printf 'width_mm = ${screens[0-width_mm]}\n'
-printf 'height_mm = ${screens[0-height_mm]}\n'
+LC_CTYPE=C
+ 
+source -p .:/usr/share/bashwm bashwm.xvars || source bashwm_xvars
 
-printf 'root = ${screens[0-root]}\n'
+>| bashwm.log
+
+proto_major=11
+proto_minor=0
+
+X_NET_WM_STATE_REMOVE=0
+X_NET_WM_STATE_ADD=1
+X_NET_WM_STATE_TOGGLE=2
+
+current_desktop=0
+desktop_count=4
+
+bashwm_border_size=2
+bashwm_active_border=$(( 16#005577 ))
+bashwm_inactive_border=$(( 16#f0f0f0 ))
+
+declare -A screens
+declare -A atoms
+declare -a windows
 
 declare -a keysym_command_map=(
 	[$XK_1]="$X_Mod4Mask:select_desktop 0,$((X_Mod4Mask|X_ShiftMask)):move_to_desktop 0"
@@ -1031,16 +1239,28 @@ client_events=$(( $X_EnterWindowMask |
 			$X_StructureNotifyMask |
 			$X_PropertyChangeMask ))
 
-send_change_window_events $root $root_events >&"$xfd"
-send_get_keyboard_mapping >&"$xfd"
-intern_atoms >&"$xfd"
-add_check_window >&"$xfd"
+reply_handlers[X_GetKeyboardMapping]=read_keyboard_mapping
 
-event_loop >&"$xfd" <&"$xfd"
+event_handlers[X_Error]=handle_error
+event_handlers[X_Reply]=handle_reply
+event_handlers[X_ConfigureNotify]=handle_configure_notify
+event_handlers[X_CreateNotify]=handle_create_notify
+event_handlers[X_MapNotify]=handle_map_notify
+event_handlers[X_UnmapNotify]=handle_unmap_notify
+event_handlers[X_DestroyNotify]=handle_destroy_notify
+event_handlers[X_ConfigureRequest]=handle_configure_request
+event_handlers[X_PropertyNotify]=handle_property_notify
+event_handlers[X_MotionNotify]=handle_motion_notify
+event_handlers[X_EnterNotify]=handle_enter_notify
+event_handlers[X_DestroyNotify]=handle_destroy_notify
+event_handlers[X_ButtonPress]=handle_button_press
+event_handlers[X_ButtonRelease]=handle_button_release
+event_handlers[X_KeyPress]=handle_key_press
+event_handlers[X_MapRequest]=handle_map_request
+event_handlers[X_FocusIn]=handle_focus_in
+event_handlers[X_FocusOut]=handle_focus_out
+event_handlers[X_ClientMessage]=handle_client_message
 
-if [[ $error_code ]]; then
-	printf 'Error code: %d\n' $error_code
-	printf 'Error seq_no: %d\n' $error_seq_no
-	printf 'Error data: %04x\n' $error_data
-	printf 'Error op code: %d:%d\n' $error_major_op_code $error_minor_op_code
-fi
+source -p .:~/.config/bashwm:/etc/bashwm:/usr/share/bashwm bashwm.config
+
+run
