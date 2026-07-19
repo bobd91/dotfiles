@@ -2,8 +2,8 @@
 
 log() {
 	local c1=${1::1}
-	[[ $c1 == '<' || $c1 == '>' ]] && printf '\n' >> bashwm.log
-	printf "$@" >> bashwm.log
+	[[ $c1 == '<' || $c1 == '>' ]] && printf '\n' >> $bashlog
+	printf "$@" >> $bashlog
 }
 
 write8() {
@@ -181,7 +181,8 @@ readxauth() {
 send_setup() {
 	local lsb_first="$(( 16#42 ))"
 	local name_len=${#xauth_name}
-	local data_len=${#xauth_data}
+	# data is 02x formatted bytes
+	local data_len=$(( ${#xauth_data} / 2 ))
 
 	log '> Setup Request\n'
 
@@ -378,24 +379,26 @@ send_set_window_pos() {
 	window[old_y]=${window[y]}
 	window[old_width]=${window[width]}
 	window[old_height]=${window[height]}
-	window[x]=x
-	window[y]=y
-	window[width]=width
-	window[height]=height
+	window[x]=$x
+	window[y]=$y
+	window[width]=$width
+	window[height]=$height
 	window[border_width]=$border_width
 
+	log_window $windowid
+
 	mask=$(( X_CWX | X_CWY | X_CWWidth | X_CWHeight | X_CWBorderWidth ))
-	(( $stacking_order )) && (( mask |= X_CWStackMode ))
+	[[ $stacking_order ]] && (( mask |= X_CWStackMode ))
 	beginrequest $X_ConfigureWindow 0 8
 	write32 $windowid
 	write16 $mask
 	writepad 2
-	write32 $(( x - border_width ))
-	write32 $(( y - border_width ))
+	write32 $(( x + border_width ))
+	write32 $(( y + border_width ))
 	write32 $(( width - (2 * border_width) ))
 	write32 $(( height - (2 * border_width) ))
 	write32 $border_width
-	(( $stacking_order )) && write32 $stacking_order
+	[[ $stacking_order ]] && write32 $stacking_order
 }
 
 send_map_window() {
@@ -457,6 +460,23 @@ read_keyboard_mapping() {
 	done
 }
 
+cache_xa_names() {
+	local names=( ATOM CARDINAL COLORMAP CARDINAL INTEGER PIXMAP \
+		STRING VISUALID WINDOW WM_COMMAND WM_HINTS WM_NAME \
+		WM_NORMAL_HINTS WM_SIZE_HINTS WM_CLASS WM_TRANSIENT_FOR )
+	local name xa_id
+
+	for name in ${names[@]}; do
+		xa_id="XA_$name"
+		xa_names[${!xa_id}]=$name
+	done
+}
+
+xa_name() {
+	xa_id=$1
+	echo ${xa_names[xa_id]:-$xa_id}
+}
+
 read_intern_atom() {
 	local name=$1
 	local root=${screen_0[root]}
@@ -471,6 +491,8 @@ read_intern_atom() {
 
 	printf -v "XA$name" $atom
 
+	xa_names[atom]=$name
+
 	case $name in
 		_NET_CURRENT_DESKTOP) 
 			send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 1 $current_desktop 
@@ -480,6 +502,10 @@ read_intern_atom() {
 			;;
 		_NET_DESKTOP_VIEWPORT)
 			send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 2 0 0
+			;;
+		_NET_WORKAREA)
+			calculate_workarea
+			;;
 	esac
 }
 
@@ -491,13 +517,18 @@ send_change_property() {
 	local prop_bits=$5
 	local prop_count=$6
 	local bytes=$(( prop_count * prop_bits / 8 ))
-	local pad=$(pad4 $bytes)
+	local pad=${ pad4 $bytes; }
 	local req_len=$(( 6 + (bytes + pad) / 4 ))
 
 	shift 6
 	local prop_value=( $@ )
 
-	log '> Change Property %s for window %s\n' $prop_atom $windowid
+	log '> Change Property %s for window %s\n' ${ xa_name $prop_atom; } $windowid
+
+	if (( prop_bits%8 )); then
+		log '\nInvalid format %s\n' $prop_bits
+		return
+	fi
 
 	beginrequest $X_ChangeProperty $mode $req_len
 	write32 $windowid
@@ -506,6 +537,8 @@ send_change_property() {
 	write8 $prop_bits
 	writepad 3
 	write32 $prop_count
+
+
 
 	if (( prop_type == XA_UTF8_STRING )); then
 		writechars $prop_count $prop_value
@@ -524,7 +557,7 @@ send_get_property() {
 	local length=$4
 	local start=${5:-0}
 
-	log '> Get property %d for window %d\n' $atom $windowid
+	log '> Get property %s for window %d\n' ${ xa_name $atom; } $windowid
 	beginrequest $X_GetProperty 0 6 "read_get_property $windowid $atom $start"
 	write32 $windowid
 	write32 $atom
@@ -548,7 +581,12 @@ read_get_property() {
 	read32 length
 	readpad 12
 
-	log '< Property %d for window %d, length %d\n' $atom $windowid $length
+	if (( format%8 )); then
+		log '\nInvalid format %s\n' $format
+		return
+	fi
+
+	log '< Property %s for window %d, length %d\n' ${ xa_name $atom; } $windowid $length
 
 	(( $length  )) || return
 
@@ -585,7 +623,7 @@ send_delete_property() {
 	local windowid=$1
 	local atom=$2
 
-	log '> Delete property %s for window %s\n' $atom $windowid
+	log '> Delete property %s for window %s\n' ${ xa_name $atom; } $windowid
 
 	beginrequest $X_DeleteProperty 0 3
 	write32 $windowid
@@ -677,7 +715,7 @@ handle_reply() {
 	read16 reply_seq_no
 	handler=${request_map[reply_seq_no]}
 	[[ $handler ]] || die "Unexpected reply: sequence number = $reply_seq_no"
-	unset request_map[reply_seq_no]
+	unset 'request_map[reply_seq_no]'
 	log '< Reply %s (%s)\n' "$handler" "$reply_seq_no" 
 	$handler $reply_byte $reply_seq_no
 
@@ -697,7 +735,7 @@ handle_after_reply() {
 			declare -a cmd="$action"
 			"${cmd[@]}"
 		done
-		unset after_replies[seq_no]
+		unset 'after_replies[seq_no]'
 	fi
 }
 
@@ -816,8 +854,8 @@ handle_property_notify() {
 	read8 state
 	readpad 15
 
-	log '< PropertyNotify for window %s, atom %s, state %s\n' \
-		$windowid $atom $state
+	log '< PropertyNotify for window %s, %s, state %s\n' \
+		$windowid ${ xa_name $atom; } $state
 }
 
 handle_motion_notify() {
@@ -873,17 +911,65 @@ handle_key_press() {
 	done
 }
 
-add_window() {
-	echo ${screen_0[wa_x]} ${screen_0[wa_y]} \
-		${screen_0[wa_width} ${screen_0[wa_height]}
+add_tile() {
+	local desktopid=$1
+	local windowid=$2
+
+	local -n tiles="desktiles_$desktopid"
+
+	tiles=( ${tiles[@]::1} $windowid ${tiles[@]:1} )
+}
+
+add_float() {
+	local desktopid=$1
+	local windowid=$2
+	local -n floats="deskfloats_$desktopid"
+
+	floats+=( $windowid )
+}
+
+layout_tiles() {
+	local desktopid=$1
+	local -n tiles=desktiles_$desktopid
+
+	local num_tiles=${#tiles[@]}
+	local x=${screen_0[wa_x]}
+	local y=${screen_0[wa_y]}
+	local width=${screen_0[wa_width]}
+	local height=${screen_0[wa_height]}
+	local window w h hdiff
+
+	case $num_tiles in
+		0)	:
+			;;
+		1)	send_set_window_pos ${tiles[0]} \
+				$x $y $width $height
+			;;
+		2)	w=$(( width / 2 ))
+			send_set_window_pos ${tiles[0]} \
+				$x $y $w $height
+			send_set_window_pos ${tiles[1]} \
+				$((x + w)) $y $((width - w)) $height
+			;;
+		*)      local -n window="window_${tiles[0]}"
+			w=${window[width]}
+			(( x+=w, width-=w ))
+			h=$(( height / (num_tiles - 1) ))
+			hdiff=$(( height - (h * (num_tiles - 1)) ))
+			for (( i=1 ; i<num_tiles ; i++ )); do
+				send_set_window_pos ${tiles[i]} \
+					$x $y \
+					$width $(( h + hdiff ))
+				(( y += h + hdiff, hdiff = 0 ))
+			done
+			;;
+	esac
 }
 
 after_reply() {
 	local cmd="(${@@Q})"
-	local len=${#cmd}
-	
 
-	after_replies[sequence_number]+="${len}${cmd}"
+	after_replies[sequence_number]+="${#cmd}${cmd}"
 }
 
 
@@ -915,6 +1001,7 @@ log_window() {
 
 	log '%s\n' "window $1"
 	for k in ${!window[@]}; do
+		(( $k )) && k=${ xa_name $k; }
 		log '  [%s] = %s\n' $k "${window[$k]}"
 	done
 }
@@ -928,7 +1015,7 @@ layout_desktop() {
 	:
 }
 
-recalculate_workarea() {
+calculate_workarea() {
 	local left=0 right=0 top=0 bottom=0
 	local x=0 y=0
 	local width=${screen_0[width_pixels]}
@@ -960,32 +1047,121 @@ recalculate_workarea() {
 		$XA_NET_WORKAREA $XA_CARDINAL 32 4 \
 		$x $y $width $height
 
-	layout_desktop
+	layout_tiles $current_desktop
 }
 
 map_window() {
 	local windowid=$1
 	local root=${screen_0[root]}
-	local pos
 	local -n window="window_$windowid"
 
-	log_window $windowid
+	(( ${window[mapped]} )) && return
+	window[mapped]=1
+
+	log '\ndesktiles_0=(%s)\n' "${desktiles_0[*]}"
 
 	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
+		log '\nAdd strut %s\n' $windowid
+		window[type]=strut
 		struts[windowid]=${window[$XA_NET_WM_STRUT_PARTIAL]}
-		window[desktop]=$(( 16#FFFF ))
-		recalculate_workarea
-	elif [[ ${window[$XA_NET_WM_WINDOW_TYPE]} ]] && 
-		(( ${window[$XA_NET_WM_WINDOW_TYPE]} == XA_NET_WM_WINDOW_TYPE_NORMAL )); then
-		pos=( $(add_window $windowid) )
-		send_set_border_color $windowid $bashwm_active_border
-		send_set_window_pos $windowid ${pos[@]}
+		calculate_workarea
+	else
+		window[desktop]=$current_desktop
+		if [[ -z ${window[$XA_NET_WM_WINDOW_TYPE]} ]] || 
+			(( ${window[$XA_NET_WM_WINDOW_TYPE]} \
+				== XA_NET_WM_WINDOW_TYPE_NORMAL )); then
+			log '\nAdd tile %s\n' $windowid
+			window[type]=tile
+			send_set_border_color $windowid $wm_active_border
+			add_tile $current_desktop $windowid
+			window[desktop]=$current_desktop
+			layout_tiles $current_desktop
+		else
+			log '\nAdd float %s\n' $windowid
+			window[type]=float
+			add_float $current_desktop $windowid
+			window[desktop]=$current_desktop
+		fi
 	fi
-	(( window[desktop] |= (1 << current_desktop) ))
+
+	log '\ndesktiles_0=(%s)\n' "${desktiles_0[*]}"
+
+	windowlist+=( $windowid )
+
+	log "\nWindowlist=(%s)\n" "${windowlist[*]}"
 
 	send_map_window $windowid
 	send_change_property $root $X_PropModeAppend $XA_NET_CLIENT_LIST \
 		$XA_WINDOW 32 1 $windowid
+}
+
+remove_window() {
+	local windowid=$1
+	local -n window=window_$windowid
+	local type=${window[type]}
+	local windowids=desk${type}s_${window[desktop]}
+
+	log "\nRemove window type %s id %s\n" $type $windowid
+
+	unset 'window[desktop]'
+
+	log "Var=%s\n" $windowids
+
+	remove_id $windowids $windowid
+}
+
+remove_id() {
+	local arr=$1
+	local -n ids=$arr
+	local id=$2
+	local list=" ${ids[*]} "
+
+	log "Removing %s from %s\n" $id "$arr"
+
+	ids=( ${list/ $id / } )
+
+	log '\nRemove <%s> from <%s> => (%s)\n' "$id" "$list" "${ids[*]}"
+}
+
+unmap_window() {
+	local windowid=$1
+	local -n window=window_$windowid
+	local root=${screen_0[root]}
+	local desktopid
+
+	(( ${window[mapped]} )) || return
+
+	log '\ndesktiles_0=(%s)\n' "${desktiles_0[*]}"
+
+	window[mapped]=0
+	case "${window[type]}" in
+		strut)	unset 'struts[windowid]'
+			calculate_workarea
+			;;
+		tile)	desktopid=${window[desktop]}
+			remove_window $windowid
+			layout_tiles $desktopid
+			;;
+		float)  remove_window $windowid
+			;;
+		*)	log '\nUnknown window type: %s\n' "${window[type]}"
+			log_window $windowid
+			;;
+	esac
+
+	log '\ndesktiles_0=(%s)\n' "${desktiles_0[*]}"
+
+	log "\nWindowlist=(%s)\n" "${windowlist[*]}"
+	remove_id windowlist $windowid
+	log "\nWindowlist=(%s)\n" "${windowlist[*]}"
+
+	if (( ${#windowlist[@]} )); then
+		send_change_property $root $X_PropModeReplace \
+			$XA_NET_CLIENT_LIST $XA_WINDOW 32 \
+			${#windowlist[@]} ${windowlist[@]}
+	else
+		send_delete_property $root $XA_NET_CLIENT_LIST
+	fi
 }
 
 handle_unmap_notify() {
@@ -997,7 +1173,7 @@ handle_unmap_notify() {
 
 	log '< UnmapNotify for window %s\n' $windowid
 
-	# remove_window $windowid
+	unmap_window $windowid
 }
 
 
@@ -1079,13 +1255,18 @@ handle_client_message() {
 	read32 windowid
 	read32 atom
 
+	if (( format%8 )); then
+		log '\nInvalid format %s\n' $format
+		return
+	fi
+
 	num_values=$(( 160 / format ))
 	for (( i=0 ; i<num_values ; i++ )); do
 		read$format value
 		values[i]=$value
 	done
 	log '< ClientMessage %s %s %s [0]=%s [1]=%s ...\n' \
-			$format $windowid $atom ${values[0]} ${values[1]}
+			$format $windowid ${ xa_name $atom; } ${values[0]} ${values[1]}
 	case $atom in
 	$XA_NET_CURRENT_DESKTOP) 
 		select_desktop ${values[0]} 
@@ -1193,13 +1374,19 @@ run() {
 	fi
 }
 
+DISPLAY=${DISPLAY:-0}
+
 dsp=${1:-${DISPLAY:1}}
 
 LC_CTYPE=C
  
-source -p .:/usr/share/bashwm bashwm.xvars || source bashwm_xvars
+source -p /usr/local/share/bashwm bashwm.xvars
 
->| bashwm.log
+bashlog=~/.cache/bashwm/bashwm.log
+
+mkdir -p ${bashlog%/*}
+
+>| $bashlog
 
 proto_major=11
 proto_minor=0
@@ -1211,9 +1398,9 @@ X_NET_WM_STATE_TOGGLE=2
 current_desktop=0
 desktop_count=4
 
-bashwm_border_size=2
-bashwm_active_border=$(( 16#005577 ))
-bashwm_inactive_border=$(( 16#f0f0f0 ))
+wm_border_width=1
+wm_active_border=$(( 16#005577 ))
+wm_inactive_border=$(( 16#f0f0f0 ))
 
 declare -A screens
 declare -A atoms
