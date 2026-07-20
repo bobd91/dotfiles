@@ -410,6 +410,15 @@ send_map_window() {
 	write32 $windowid
 }
 
+send_unmap_window() {
+	local windowid=$1
+
+	log '> UnmapWindow %s\n' $windowid
+
+	beginrequest $X_UnmapWindow 0 2
+	write32 $windowid
+}
+
 send_intern_atom() {
 	local name=$1
 	local name_len=${#name}
@@ -519,6 +528,7 @@ send_change_property() {
 	local bytes=$(( prop_count * prop_bits / 8 ))
 	local pad=${ pad4 $bytes; }
 	local req_len=$(( 6 + (bytes + pad) / 4 ))
+	local i
 
 	shift 6
 	local prop_value=( $@ )
@@ -573,7 +583,7 @@ read_get_property() {
 	local start=$3
 	local format=$4
 	local reply_len atom_type length bytes_after
-	local item val byte_count
+	local item val byte_count i
 
 	read32 reply_len
 	read32 atom_type
@@ -630,6 +640,139 @@ send_delete_property() {
 	write32 $atom
 }
 
+send_query_tree() {
+	local root=$1
+	local handler=$2
+
+	log '> Query Tree\n'
+
+	beginrequest $X_QueryTree 0 2 "$handler"
+	write32 $root
+}
+
+send_get_window_attributes() {
+	local windowid=$1
+	local handler=$2
+
+	log '> Get Window Attributes for %s\n' $windowid
+
+	beginrequest $X_GetWindowAttributes 0 2 "$handler"
+	write32 $windowid
+}
+
+send_get_geometry() {
+	local windowid=$1
+	local handler=$2
+
+	log '> Get Geometry for %s\n' $windowid
+
+	beginrequest $X_GetGeometry 0 2 "$handler"
+	write32 $windowid
+}
+
+read_adopt_windows() {
+	local num_windows i windowid
+
+	readpad 12
+	read16 num_windows
+	readpad 14
+
+	(( num_windows )) || return
+
+	log '\nAdopting %s windows\n' $num_windows
+
+	for (( i=0 ; i<num_windows ; i++ )); do
+		read32 windowid
+		log 'Checking prospective adoption of window %s\n' $windowid
+		send_get_window_attributes $windowid "read_get_window_attributes $windowid"
+	done
+
+	when_idle calculate_workarea
+}
+
+read_get_window_attributes() {
+	local windowid=$1
+	local class map_stat override_redirect
+
+	readpad 8
+	read16 class
+	readpad 12
+	read8 map_state
+	read8 override_redirect
+	readpad 16
+
+	if (( class == X_InputOnly || override_redirect )); then
+		# We do not manage input only or override redirect windows
+		# But createnotify does not tell us if input only
+		# so we may have already created 'window_xxx' array
+		[[ -v window_$windowid ]] && unset 'window_$windowid'
+		return
+	fi
+
+	# Windows we saw created will have x,y,etc
+	# But adopted windows will not
+	if [[ ! -v window_$windowid[x] ]]; then
+		declare -Ag "window_$windowid=(mapped $((map_state != 0)))"
+		send_get_geometry $windowid "read_adopt_window $windowid"
+	fi
+}
+
+read_adopt_window() {
+	local windowid=$1
+	local -n window=window_$windowid
+	local x y width height border_width 
+
+	readpad 8
+	read16 x
+	read16 y
+	read16 width
+	read16 height
+	read16 border_width
+	readpad 10
+
+	window[x]=$x
+	window[y]=$y
+	window[width]=$width
+	window[height]=$height
+	window[border_width]=$border_width
+
+	log '\nAdopting\n'
+	log_window $windowid
+
+	(( window[mapped] )) && pre_map $windowid adopt_window
+}
+
+adopt_window() {
+	local windowid=$1
+	local root=${screen_0[root]}
+	local -n window="window_$windowid"
+
+	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
+		log '\nAdd strut %s\n' $windowid
+		window[type]=strut
+		struts[windowid]=${window[$XA_NET_WM_STRUT_PARTIAL]}
+	else
+		window[desktop]=$current_desktop
+		if [[ -z ${window[$XA_NET_WM_WINDOW_TYPE]} ]] || 
+			(( ${window[$XA_NET_WM_WINDOW_TYPE]} \
+				== XA_NET_WM_WINDOW_TYPE_NORMAL )); then
+			log '\nAdd tile %s\n' $windowid
+			window[type]=tile
+			send_set_border_color $windowid $wm_active_border
+			add_tile $current_desktop $windowid
+		else
+			log '\nAdd float %s\n' $windowid
+			window[type]=float
+			add_float $current_desktop $windowid
+		fi
+	fi
+
+	windowlist+=( $windowid )
+
+	send_change_property $root $X_PropModeAppend $XA_NET_CLIENT_LIST \
+		$XA_WINDOW 32 1 $windowid
+}
+
 allocate_id() {
 	if (( last_id )); then
 		(( last_id++ ))
@@ -643,12 +786,12 @@ allocate_id() {
 	echo $(( ${server[resource_id_base]} | last_id ))
 }
 
-add_check_window() {
-	check_windowid=$(allocate_id)
-	log '> Check window id=%s\n' $check_windowid
+add_wmcheck_window() {
+	wmcheck_windowid=$(allocate_id)
+	log '> WM Check window id=%s\n' $wmcheck_windowid
 
 	beginrequest $X_CreateWindow 0 8
-	write32 $check_windowid
+	write32 $wmcheck_windowid
 	write32 ${screen_0[root]}
 	write16 0
 	write16 0
@@ -660,16 +803,16 @@ add_check_window() {
 	write32 0
 }
 
-set_check_window_props() {
+set_wmcheck_window_props() {
 	local supported
 	local root=${screen_0[root]}
 
-	send_change_property $check_windowid $X_PropModeReplace \
-		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $check_windowid
-	send_change_property $check_windowid $X_PropModeReplace \
+	send_change_property $wmcheck_windowid $X_PropModeReplace \
+		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $wmcheck_windowid
+	send_change_property $wmcheck_windowid $X_PropModeReplace \
 		$XA_NET_WM_NAME $XA_UTF8_STRING 8 6 'bashwm'
 	send_change_property $root $X_PropModeReplace \
-		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $check_windowid
+		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $wmcheck_windowid
 	send_delete_property $root $XA_NET_CLIENT_LIST
 
 	supported=( $XA_NET_CURRENT_DESKTOP $XA_NET_NUMBER_OF_DESKTOPS \
@@ -697,7 +840,24 @@ event_loop() {
 			# discard unwanted event data
 			readpad 31
 		fi
+		if (( ${#request_map[@]} == 0 )); then
+			handle_when_idle
+		fi
 
+	done
+}
+
+when_idle() {
+	idle_handlers+="(${@@Q})"
+}
+
+handle_when_idle() {
+	local i cmd
+	
+	for i in ${!idle_handlers[@]}; do
+		declare -a cmd="${idle_handlers[i]}"
+		"${cmd[@]}"
+		unset 'idle_handlers[i]'
 	done
 }
 
@@ -771,20 +931,18 @@ handle_create_notify() {
 
 	log '< CreateNotify for window %s, override_redirect %s\n' $windowid $override_redirect
 
+	[[ $windowid == $wmcheck_windowid ]] && set_wmcheck_window_props
+
 	(( override_redirect )) && return
 
-	local index=${#windows[@]}
-	windows+=( $windowid )
-
 	declare -Ag "window_$windowid=( \
-		index $index \
 		x $x \
 		y $y \
 		width $width \
 		height $height \
 		border_width $border_width)"
 	
-	[[ $windowid == $check_windowid ]] && set_check_window_props
+	send_get_window_attributes $windowid "read_get_window_attributes $windowid"
 }
 
 handle_map_notify() {
@@ -937,7 +1095,9 @@ layout_tiles() {
 	local y=${screen_0[wa_y]}
 	local width=${screen_0[wa_width]}
 	local height=${screen_0[wa_height]}
-	local window w h hdiff
+	local window w h hdiff i
+
+	log '\nLaying out %d tiles\n' $num_tiles
 
 	case $num_tiles in
 		0)	:
@@ -972,6 +1132,19 @@ after_reply() {
 	after_replies[sequence_number]+="${#cmd}${cmd}"
 }
 
+pre_map() {
+	local windowid=$1
+	local handler=$2
+
+	send_get_property $windowid $XA_NET_WM_WINDOW_TYPE $XA_ATOM 1
+	send_get_property $windowid $XA_NET_WM_STRUT_PARTIAL $XA_CARDINAL 12
+	send_get_property $windowid $XA_WM_TRANSIENT_FOR $XA_WINDOW 1
+	send_get_property $windowid $XA_WM_NORMAL_HINTS $XA_WM_SIZE_HINTS 18
+	send_get_property $windowid $XA_WM_HINTS $XA_WM_HINTS 9
+	after_reply $handler $windowid
+	send_change_window_events $windowid $client_events
+}
+
 
 handle_map_request() {
 	local windowid
@@ -982,14 +1155,8 @@ handle_map_request() {
 
 	log '< MapRequest for window %s\n' $windowid
 
-	if [[ ! -v "window_$windowid"[XA_NET_WM_WINDOW_TYPE] ]]; then
-		send_get_property $windowid $XA_NET_WM_WINDOW_TYPE $XA_ATOM 1
-		send_get_property $windowid $XA_NET_WM_STRUT_PARTIAL $XA_CARDINAL 12
-		send_get_property $windowid $XA_WM_TRANSIENT_FOR $XA_WINDOW 1
-		send_get_property $windowid $XA_WM_NORMAL_HINTS $XA_WM_SIZE_HINTS 18
-		send_get_property $windowid $XA_WM_HINTS $XA_WM_HINTS 9
-		after_reply map_window $windowid
-		send_change_window_events $windowid $client_events
+	if [[ ! -v "window_$windowid"[mapped] ]]; then
+		pre_map $windowid map_window
 	else
 		map_window $windowid
 	fi
@@ -1165,15 +1332,20 @@ unmap_window() {
 }
 
 handle_unmap_notify() {
-	local windowid
+	local windowid event
+	local root=${screen_0[root]}
 
-	readpad 7
+	readpad 3
+	read32 event
 	read32 windowid
 	readpad 20
 
-	log '< UnmapNotify for window %s\n' $windowid
+	log '< UnmapNotify for window %s from %s\n' $windowid $event
 
-	unmap_window $windowid
+	(( event == root )) && return
+
+	local -n window=window_$windowid
+	(( window[mapped] )) && unmap_window $windowid
 }
 
 
@@ -1303,20 +1475,55 @@ select_desktop() {
 
 	[[ $current_desktop != $desktop ]] || return
 
-	send_change_property $root $X_PropModeReplace \
-		$XA_NET_CURRENT_DESKTOP $XA_CARDINAL 32 1 $desktop
-	
 	hide_desktop $current_desktop
 	current_desktop=$desktop
 	show_desktop $current_desktop
+
+	send_change_property $root $X_PropModeReplace \
+		$XA_NET_CURRENT_DESKTOP $XA_CARDINAL 32 1 $desktop
 }
 
 hide_desktop() {
-	:
+	local desktopid=$1
+	local -n tiles=desktiles_$desktopid
+	local -n floats=deskfloats_$desktopid
+
+	log '\nHide Desktop %s\n' $desktopid
+	log 'Hiding %s tiles and %s floats\n' ${#tiles[@]} ${#floats[@]}
+	local ids=( ${tiles[@]} ${floats[@]} )
+	log 'Unmapping %s windows\n' ${#ids[@]}
+	for id in ${ids[@]}; do
+		local -n window=window_$id
+		window[mapped]=0
+		send_unmap_window $id
+	done
+	windowlist=()
+	send_delete_property $root $XA_NET_CLIENT_LIST
 }
 
 show_desktop() {
-	:
+	local desktopid=$1
+	local -n tiles=desktiles_$desktopid
+	local -n floats=deskfloats_$desktopid
+
+	log '\nShow Desktop %s\n' $desktopid
+	log 'Showing %s tiles and %s floats\n' ${#tiles[@]} ${#floats[@]}
+	windowlist=( ${tiles[@]} ${floats[@]} )
+
+	log 'Mapping %s windows\n' ${#windowlist[@]}
+	for id in ${windowlist[@]}; do
+		local -n window=window_$id
+		window[mapped]=1
+		send_map_window $id
+	done
+	
+	if (( ${#windowlist[@]} )); then
+		send_change_property $root $X_PropModeReplace \
+			$XA_NET_CLIENT_LIST $XA_WINDOW 32 \
+			${#windowlist[@]} ${windowlist[@]}
+	else
+		send_delete_property $root $XA_NET_CLIENT_LIST
+	fi
 }
 
 move_to_desktop() {
@@ -1329,27 +1536,27 @@ spawn() {
 }
 
 new_terminal() {
-	spawn /usr/local/bin/terminal
+	spawn terminal
 }
 
 new_browser() {
-	spawn /usr/local/bin/browser
+	spawn browser
 }
 
 show_menu() {
-	spawn /usr/local/bin/dmenu
+	spawn dmenu
 }
-
+	
 run() {
 	readxauth < "${XAUTHORITY:-~/.Xauthority}"
 
 	exec {xfd}<>/dev/tcp/127.0.0.1/$(( 6000+$dsp ))
 
-	send_setup >&"$xfd"
-	read_setup_leader <&"$xfd"
+	send_setup >&${xfd}
+	read_setup_leader <&${xfd}
 
 	if (( $setup_success != 1 )); then
-		read_setup_failure <&"$xfd"
+		read_setup_failure <&${xfd}
 
 		printf 'Setup Failed '
 		(( $setup_success == 2 )) && printf '(Auth) '
@@ -1357,14 +1564,20 @@ run() {
 		exit $setup_success
 	fi
 
-	read_setup_ok <&"$xfd"
+	read_setup_ok <&${xfd}
 
-	intern_atoms >&"$xfd"
-	send_get_keyboard_mapping >&"$xfd"
-	send_change_window_events ${screen_0[root]} $root_events >&"$xfd"
-	add_check_window >&"$xfd"
+	local root=${screen_0[root]}
 
-	event_loop >&"$xfd" <&"$xfd"
+	intern_atoms >&${xfd}
+	send_get_keyboard_mapping >&${xfd}
+	send_change_window_events $root $root_events >&${xfd}
+	add_wmcheck_window >&${xfd}
+
+	send_query_tree $root read_adopt_windows >&${xfd}
+
+	$autostart
+
+	event_loop >&${xfd} <&${xfd}
 
 	if (( $error_code )); then
 		printf 'Error code: %d\n' $error_code
@@ -1374,7 +1587,7 @@ run() {
 	fi
 }
 
-DISPLAY=${DISPLAY:-0}
+DISPLAY=${DISPLAY:-:0}
 
 dsp=${1:-${DISPLAY:1}}
 
@@ -1404,7 +1617,7 @@ wm_inactive_border=$(( 16#f0f0f0 ))
 
 declare -A screens
 declare -A atoms
-declare -a windows
+declare -a idle_handlers
 
 declare -a keysym_command_map=(
 	[$XK_1]="$X_Mod4Mask:select_desktop 0,$((X_Mod4Mask|X_ShiftMask)):move_to_desktop 0"
@@ -1448,6 +1661,6 @@ event_handlers[X_FocusIn]=handle_focus_in
 event_handlers[X_FocusOut]=handle_focus_out
 event_handlers[X_ClientMessage]=handle_client_message
 
-source -p .:~/.config/bashwm:/etc/bashwm:/usr/share/bashwm bashwm.config
+source -p ~/.config/bashwm:/etc/bashwm:/usr/share/bashwm bashwm.config
 
 run
