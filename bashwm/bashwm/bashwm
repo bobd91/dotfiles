@@ -393,8 +393,8 @@ send_set_window_pos() {
 	write32 $windowid
 	write16 $mask
 	writepad 2
-	write32 $(( x + border_width ))
-	write32 $(( y + border_width ))
+	write32 $x
+	write32 $y
 	write32 $(( width - (2 * border_width) ))
 	write32 $(( height - (2 * border_width) ))
 	write32 $border_width
@@ -489,6 +489,7 @@ xa_name() {
 read_intern_atom() {
 	local name=$1
 	local root=${screen_0[root]}
+	local xaname=$name
 
 	readpad 4
 	read32 atom
@@ -496,9 +497,10 @@ read_intern_atom() {
 
 	log '< Atom %s = %d\n' $name $atom
 
-	[[ ${name::1} == '_' ]] || name="_$name"
+	[[ ${xaname::1} == '_' ]] || xaname="_$xaname"
+	xaname="XA$xaname"
 
-	printf -v "XA$name" $atom
+	printf -v $xaname $atom
 
 	xa_names[atom]=$name
 
@@ -515,6 +517,8 @@ read_intern_atom() {
 		_NET_WORKAREA)
 			calculate_workarea
 			;;
+		WM_PROTOCOLS)
+			property_change_handlers[XA_WM_PROTOCOLS]=wm_protocols_changed
 	esac
 }
 
@@ -621,12 +625,52 @@ read_get_property() {
 
 	window[$atom]="$val"
 
-	(( bytes_after )) || return
-	
-	(( start += byte_count ))
-	(( bytes_after -= byte_count ))
+	if (( bytes_after )); then
+		(( start += byte_count ))
+		(( bytes_after -= byte_count ))
+		send_get_property $windowid $atom $atom_type $bytes_after $start
+	else
+		property_changed $windowid $atom
+	fi
+}
 
-	send_get_property $windowid $atom $atom_type $bytes_after $start
+wm_protocols_changed() {
+	local windowid=$1
+	local -n window=window_$windowid
+	local protocols=${window[$XA_WM_PROTOCOLS]}
+	local protocol
+
+	log '\nProtocols changed for window %s to %s\n' $windowid "${protocols[*]}"
+
+	window[take_focus]=0
+	window[delete_window]=0
+	for protocol in $protocols; do
+		case $protocol in
+			$XA_WM_TAKE_FOCUS)    window[take_focus]=1 ;;
+			$XA_WM_DELETE_WINDOW) window[delete_window]=1 ;;
+			*) ;;
+		esac
+	done
+}
+
+wm_hints_changed() {
+	local windowid=$1
+	local -n window=window_$windowid
+	local hints=( ${window[$XA_WM_HINTS]} 1 1 )
+
+	log '\nHints changed for window %s to %s\n' $windowid "${hints[*]}"
+
+	window[input]=$(( hints[0] & 1 && hints[1] ))
+}
+
+property_changed() {
+	local windowid=$1
+	local atom=$2
+	local handler="${property_change_handlers[atom]}"
+
+	log '\nWindow %s Property %d handled by %s\n' $windowid $atom $handler
+	
+	[[ $handler ]] && $handler $windowid
 }
 
 send_delete_property() {
@@ -750,7 +794,7 @@ adopt_window() {
 	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
 		log '\nAdd strut %s\n' $windowid
 		window[type]=strut
-		struts[windowid]=${window[$XA_NET_WM_STRUT_PARTIAL]}
+		add_strut $windowid
 	else
 		window[desktop]=$current_desktop
 		if [[ -z ${window[$XA_NET_WM_WINDOW_TYPE]} ]] || 
@@ -758,7 +802,6 @@ adopt_window() {
 				== XA_NET_WM_WINDOW_TYPE_NORMAL )); then
 			log '\nAdd tile %s\n' $windowid
 			window[type]=tile
-			send_set_border_color $windowid $wm_active_border
 			add_tile $current_desktop $windowid
 		else
 			log '\nAdd float %s\n' $windowid
@@ -767,10 +810,7 @@ adopt_window() {
 		fi
 	fi
 
-	windowlist+=( $windowid )
-
-	send_change_property $root $X_PropModeAppend $XA_NET_CLIENT_LIST \
-		$XA_WINDOW 32 1 $windowid
+	clientlist_add $windowid
 }
 
 allocate_id() {
@@ -1075,7 +1115,7 @@ add_tile() {
 
 	local -n tiles="desktiles_$desktopid"
 
-	tiles=( ${tiles[@]::1} $windowid ${tiles[@]:1} )
+	tiles=( $windowid ${tiles[@]} )
 }
 
 add_float() {
@@ -1111,8 +1151,9 @@ layout_tiles() {
 			send_set_window_pos ${tiles[1]} \
 				$((x + w)) $y $((width - w)) $height
 			;;
-		*)      local -n window="window_${tiles[0]}"
-			w=${window[width]}
+		*)      w=$(( width / 2))
+			send_set_window_pos ${tiles[0]} \
+				$x $y $w $height
 			(( x+=w, width-=w ))
 			h=$(( height / (num_tiles - 1) ))
 			hdiff=$(( height - (h * (num_tiles - 1)) ))
@@ -1136,6 +1177,7 @@ pre_map() {
 	local windowid=$1
 	local handler=$2
 
+	send_get_property $windowid $XA_WM_PROTOCOLS $XA_ATOM 6
 	send_get_property $windowid $XA_NET_WM_WINDOW_TYPE $XA_ATOM 1
 	send_get_property $windowid $XA_NET_WM_STRUT_PARTIAL $XA_CARDINAL 12
 	send_get_property $windowid $XA_WM_TRANSIENT_FOR $XA_WINDOW 1
@@ -1164,12 +1206,13 @@ handle_map_request() {
 
 log_window() {
 	local -n window="window_$1"
-	local k
+	local k v
 
 	log '%s\n' "window $1"
 	for k in ${!window[@]}; do
+		v="${window[$k]}"
 		(( $k )) && k=${ xa_name $k; }
-		log '  [%s] = %s\n' $k "${window[$k]}"
+		log '  [%s] = %s\n' "$k" "$v"
 	done
 }
 
@@ -1188,11 +1231,17 @@ calculate_workarea() {
 	local width=${screen_0[width_pixels]}
 	local height=${screen_0[height_pixels]}
 	local root=${screen_0[root]}
-	local sstrut strut
+	local id window strut sstrut
+	
+	log "\nStruts: %s\n" "${struts[@]@Q}"
 
-	for sstrut in "${struts[@]}"; do
-		log 'Strut: %s\n' $sstrut
+	for id in "${struts[@]}"; do
+		log_window $id
+		local -n window=window_$id
+		sstrut="${window[$XA_NET_WM_STRUT_PARTIAL]}"
+		log '\nStrut: %s\n' "$sstrut"
 		strut=( $sstrut )
+		(( ${#strut[@]} >= 4 )) || continue
 		left=$(max left strut[0])
 		right=$(max right strut[1])
 		top=$(max top strut[2])
@@ -1217,6 +1266,12 @@ calculate_workarea() {
 	layout_tiles $current_desktop
 }
 
+add_strut() {
+	local windowid=$1
+
+	struts+=( $windowid )
+}
+
 map_window() {
 	local windowid=$1
 	local root=${screen_0[root]}
@@ -1230,7 +1285,7 @@ map_window() {
 	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
 		log '\nAdd strut %s\n' $windowid
 		window[type]=strut
-		struts[windowid]=${window[$XA_NET_WM_STRUT_PARTIAL]}
+		add_strut $windowid
 		calculate_workarea
 	else
 		window[desktop]=$current_desktop
@@ -1239,42 +1294,38 @@ map_window() {
 				== XA_NET_WM_WINDOW_TYPE_NORMAL )); then
 			log '\nAdd tile %s\n' $windowid
 			window[type]=tile
-			send_set_border_color $windowid $wm_active_border
 			add_tile $current_desktop $windowid
-			window[desktop]=$current_desktop
 			layout_tiles $current_desktop
 		else
 			log '\nAdd float %s\n' $windowid
 			window[type]=float
 			add_float $current_desktop $windowid
-			window[desktop]=$current_desktop
 		fi
 	fi
 
-	log '\ndesktiles_0=(%s)\n' "${desktiles_0[*]}"
-
-	windowlist+=( $windowid )
-
-	log "\nWindowlist=(%s)\n" "${windowlist[*]}"
-
 	send_map_window $windowid
-	send_change_property $root $X_PropModeAppend $XA_NET_CLIENT_LIST \
-		$XA_WINDOW 32 1 $windowid
+
+	clientlist_add $windowid
 }
 
-remove_window() {
+remove_desktop_window() {
 	local windowid=$1
 	local -n window=window_$windowid
+	local desktopid=${window[desktop]}
 	local type=${window[type]}
-	local windowids=desk${type}s_${window[desktop]}
 
-	log "\nRemove window type %s id %s\n" $type $windowid
+	log "\nRemove %s window %s from desktop %s\n" $type $windowid $desktopid
 
+	case $type in
+		strut)  remove_id struts $windowid ;;
+		tile)   remove_id desktiles_$desktopid $windowid;;
+		floats) remove_id deskfloats_$desktopid $windowid;;
+	esac
+
+	remove_focus $windowid
+	clientlist_remove $windowid
+	window[mapped]=0
 	unset 'window[desktop]'
-
-	log "Var=%s\n" $windowids
-
-	remove_id $windowids $windowid
 }
 
 remove_id() {
@@ -1293,39 +1344,50 @@ remove_id() {
 unmap_window() {
 	local windowid=$1
 	local -n window=window_$windowid
-	local root=${screen_0[root]}
-	local desktopid
+	local desktopid=${window[desktop]}
 
 	(( ${window[mapped]} )) || return
 
-	log '\ndesktiles_0=(%s)\n' "${desktiles_0[*]}"
+	remove_desktop__window $windowid
 
-	window[mapped]=0
 	case "${window[type]}" in
-		strut)	unset 'struts[windowid]'
-			calculate_workarea
-			;;
-		tile)	desktopid=${window[desktop]}
-			remove_window $windowid
-			layout_tiles $desktopid
-			;;
-		float)  remove_window $windowid
-			;;
-		*)	log '\nUnknown window type: %s\n' "${window[type]}"
-			log_window $windowid
-			;;
+		strut)	calculate_workarea ;;
+		tile)	layout_tiles $desktopid ;;
+		*)	;;
 	esac
+}
 
-	log '\ndesktiles_0=(%s)\n' "${desktiles_0[*]}"
+clientlist_add() {
+	local windowid=$1
 
-	log "\nWindowlist=(%s)\n" "${windowlist[*]}"
-	remove_id windowlist $windowid
-	log "\nWindowlist=(%s)\n" "${windowlist[*]}"
+	clientlist+=( $windowid )
 
-	if (( ${#windowlist[@]} )); then
+	send_clientlist_append $windowid
+}
+
+clientlist_remove() {
+	local windowid=$1
+
+	remove_id clientlist $windowid
+
+	send_clientlist_update
+}
+
+send_clientlist_append() {
+	local windowid=$1
+	local root=${screen_0[root]}
+
+	send_change_property $root $X_PropModeAppend $XA_NET_CLIENT_LIST \
+		$XA_WINDOW 32 1 $windowid
+}
+
+send_clientlist_update() {
+	local root=${screen_0[root]}
+
+	if (( ${#clientlist[@]} )); then
 		send_change_property $root $X_PropModeReplace \
 			$XA_NET_CLIENT_LIST $XA_WINDOW 32 \
-			${#windowlist[@]} ${windowlist[@]}
+			${#clientlist[@]} ${clientlist[@]}
 	else
 		send_delete_property $root $XA_NET_CLIENT_LIST
 	fi
@@ -1439,6 +1501,8 @@ handle_client_message() {
 	done
 	log '< ClientMessage %s %s %s [0]=%s [1]=%s ...\n' \
 			$format $windowid ${ xa_name $atom; } ${values[0]} ${values[1]}
+
+
 	case $atom in
 	$XA_NET_CURRENT_DESKTOP) 
 		select_desktop ${values[0]} 
@@ -1453,6 +1517,9 @@ handle_client_message() {
 
 intern_atoms() {
 	send_intern_atom UTF8_STRING
+	send_intern_atom WM_PROTOCOLS
+	send_intern_atom WM_TAKE_FOCUS
+	send_intern_atom WM_DELETE_WINDOW
 	send_intern_atom _NET_CURRENT_DESKTOP
 	send_intern_atom _NET_NUMBER_OF_DESKTOPS
 	send_intern_atom _NET_DESKTOP_VIEWPORT
@@ -1497,33 +1564,29 @@ hide_desktop() {
 		window[mapped]=0
 		send_unmap_window $id
 	done
-	windowlist=()
-	send_delete_property $root $XA_NET_CLIENT_LIST
+	clientlist=( ${struts[@]} )
+	send_clientlist_update
 }
 
 show_desktop() {
 	local desktopid=$1
 	local -n tiles=desktiles_$desktopid
 	local -n floats=deskfloats_$desktopid
+	local ids
 
 	log '\nShow Desktop %s\n' $desktopid
 	log 'Showing %s tiles and %s floats\n' ${#tiles[@]} ${#floats[@]}
-	windowlist=( ${tiles[@]} ${floats[@]} )
+	windows=( ${tiles[@]} ${floats[@]} )
 
-	log 'Mapping %s windows\n' ${#windowlist[@]}
-	for id in ${windowlist[@]}; do
+	log 'Mapping %s windows\n' ${#windows[@]}
+	for id in ${ids[@]}; do
 		local -n window=window_$id
 		window[mapped]=1
 		send_map_window $id
 	done
-	
-	if (( ${#windowlist[@]} )); then
-		send_change_property $root $X_PropModeReplace \
-			$XA_NET_CLIENT_LIST $XA_WINDOW 32 \
-			${#windowlist[@]} ${windowlist[@]}
-	else
-		send_delete_property $root $XA_NET_CLIENT_LIST
-	fi
+
+	clientlist+=( ${windows[@]} )
+	send_clientlist_update
 }
 
 move_to_desktop() {
@@ -1546,8 +1609,15 @@ new_browser() {
 show_menu() {
 	spawn dmenu
 }
+
+register_property_handlers() {
+	property_change_handlers[XA_WM_HINTS]=wm_hints_changed
+}
 	
 run() {
+	cache_xa_names
+	register_property_handlers
+
 	readxauth < "${XAUTHORITY:-~/.Xauthority}"
 
 	exec {xfd}<>/dev/tcp/127.0.0.1/$(( 6000+$dsp ))
@@ -1618,6 +1688,7 @@ wm_inactive_border=$(( 16#f0f0f0 ))
 declare -A screens
 declare -A atoms
 declare -a idle_handlers
+declare -a property_change_handlers
 
 declare -a keysym_command_map=(
 	[$XK_1]="$X_Mod4Mask:select_desktop 0,$((X_Mod4Mask|X_ShiftMask)):move_to_desktop 0"
