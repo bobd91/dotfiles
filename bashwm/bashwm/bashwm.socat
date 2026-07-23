@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+
+socat -x tcp-listen:6000,reuseaddr,fork unix:/tmp/.X11-unix/X0 &
+
+. /usr/local/bin/bashwm
+
+
