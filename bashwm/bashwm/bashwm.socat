@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
 
-socat -x tcp-listen:6000,reuseaddr,fork unix:/tmp/.X11-unix/X0 &
+DISPLAY=${DISPLAY:-:0}
+dsp=${1:-${DISPLAY:1}}
 
-. /usr/local/bin/bashwm
+socat -x tcp-listen:$((6000+dsp)),reuseaddr unix:/tmp/.X11-unix/X${dsp} &
+SOCAT_PID=$!
+trap "kill $SOCAT_PID" EXIT
 
+/usr/bin/env bashwm $dsp
 

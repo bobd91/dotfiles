@@ -507,6 +507,9 @@ read_keyboard_mapping() {
 
 		keycmds="${keysym_command_map[keycodesym]}"
 		[[ $keycmds ]] || continue
+
+		log 'Map keycode=%s to command=%s\n' $keycode "$keycmds"
+
 		keycode_command_map[keycode]=$keycmds
 	done
 
@@ -1177,9 +1180,16 @@ handle_enter_notify() {
 }
 
 handle_destroy_notify() {
-	# ignore for now
-	readpad 31
-	log '< handle_destroy_notify\n'
+	local event windowid
+
+	readpad 3
+	read32 event
+	read32 windowid
+	readpad 20
+
+	log '< DestroyWindow %s (from %s)\n' $windowid $event
+
+	unset "window_$windowid"
 }
 
 handle_button_press() {
@@ -1205,13 +1215,26 @@ handle_key_press() {
 	log '< Key press %s\n' $keycode
 
 	keycode_cmd="${keycode_command_map[keycode]}" 
+
+	log 'Key commands %s\n' "$keycode_cmd"
+
 	[[ $keycode_cmd ]] || return 0
 
 	IFS=',' read -ra keycmds <<< "$keycode_cmd"
 	for keycmd in "${keycmds[@]}"; do
+
+		log 'Key command %s\n' "$keycmd"
+
 		mask="${keycmd%:*}"
+
+		log 'Event Mask %s, Key Mask %s\n' "$mask" "$keymask"
+
 		(( mask == keymask )) || continue
+
 		cmd="${keycmd#*:}"
+
+		log 'Command %s\n' "$cmd"
+
 		$cmd
 		break
 	done
@@ -1617,6 +1640,13 @@ send_clientlist_update() {
 	fi
 }
 
+send_destroy_window() {
+	local windowid=$1
+
+	beginrequest $X_DestroyWindow 0 2
+	write32 $windowid
+}
+
 handle_unmap_notify() {
 	local windowid event
 	local root=${screen_0[root]}
@@ -1847,6 +1877,28 @@ move_to_desktop() {
 	add_desktop_window $desktopid $windowid
 }
 
+delete_window() {
+	local windowid=${screen_0[active]}
+	(( $windowid )) || return
+	local window=window_$windowid
+
+	log 'Delete window %s\n' $windowid
+
+	if (( ${window[delete_window]} )); then
+		log 'Using delete_window protocol\n'
+
+		send_protocol_message $windowid $XA_WM_DELETE_WINDOW
+	else
+		log 'Sending DestroyWindow op code\n'
+
+		send_destroy_window $windowid
+	fi
+}
+
+wm_exit() {
+	exit
+}
+
 spawn() {
 	export DISPLAY=:$dsp
 	/usr/bin/env --default-signal -C "$HOME" setsid -f "$@"
@@ -1951,7 +2003,9 @@ declare -a keysym_command_map=(
 	[$XK_4]="$X_Mod4Mask:select_desktop 3,$((X_Mod4Mask|X_ShiftMask)):move_to_desktop 3"
 	[$XK_Return]="$X_Mod4Mask:new_terminal"
 	[$XK_b]="$X_Mod4Mask:new_browser"
+	[$XK_c]="$((X_Mod4Mask|X_ShiftMask)):delete_window"
 	[$XK_p]="$X_Mod4Mask:show_menu"
+	[$XK_q]="$((X_Mod4Mask|X_ShiftMask)):wm_exit"
 )
 
 root_events=$(( $X_SubstructureRedirectMask | 
@@ -1977,7 +2031,6 @@ event_handlers[X_ConfigureRequest]=handle_configure_request
 event_handlers[X_PropertyNotify]=handle_property_notify
 event_handlers[X_MotionNotify]=handle_motion_notify
 event_handlers[X_EnterNotify]=handle_enter_notify
-event_handlers[X_DestroyNotify]=handle_destroy_notify
 event_handlers[X_ButtonPress]=handle_button_press
 event_handlers[X_ButtonRelease]=handle_button_release
 event_handlers[X_KeyPress]=handle_key_press
