@@ -709,7 +709,7 @@ read_get_property() {
 		(( bytes_after -= byte_count ))
 		send_get_property $windowid $atom $atom_type $bytes_after $start
 	else
-		property_changed $windowid $atom
+		property_changed $windowid
 	fi
 }
 
@@ -779,7 +779,7 @@ property_changed() {
 
 	log 'Window %s Property %d handled by %s\n' $windowid $atom $handler
 	
-	[[ $handler ]] && $handler $windowid
+	[[ $handler ]] && $handler $windowid $atom
 }
 
 send_delete_property() {
@@ -2055,16 +2055,45 @@ read_query_extension() {
 	$handler $present "$@"
 }
 
+send_get_atom_name() {
+	local atom=$1
+
+	log '> GetAtomName %d\n' $atom
+
+	beginrequest $X_GetAtomName 0 2 read_get_atom_name $atom
+	write32 $atom
+}
+
+read_get_atom_name() {
+	#local unused=$1 
+	local atom=$2
+	local reply_length name_length name
+
+	read32 reply_length
+	read16 name_length
+	readpad 22
+	readchars $name_length name
+	readpad4 $name_length
+
+	log '< GetAtomName %d = %s\n' $atom "$name"
+
+	xa_names[$atom]="$name"
+}
+
+
 declare_monitor() {
-	local name=${1:-Primary}
-	local x=${2:-${screen_0[x]}}
-	local y=${3:-${screen_0[y]}}
-	local width=${4:-${screen_0[width]}}
-	local height=${5:-${screen_0[height]}}
+	local crtc=${1:-0}
+	local name=${2:-Primary}
+	local x=${3:-${screen_0[x]}}
+	local y=${4:-${screen_0[y]}}
+	local width=${5:-${screen_0[width]}}
+	local height=${6:-${screen_0[height]}}
 	local num=$(( monitor_count++ ))
 
 	log 'Declare monitor %d on %s x=%d y=%d width=%d height=%d\n' \
 		$num $name $x $y $width $height
+
+	crtcs[crtc]=$num
 
 	declare -Ag "monitor_$num=( \
 		name $name \
@@ -2078,11 +2107,12 @@ declare_monitor() {
 extensionrequest() {
 	local name=$1
 	local opcode=$2
-	shift 2
+	local length=$3
+	shift 3
 
 	local -n extension=extension_$name
 
-	beginrequest ${extension[opcode]} $opcode "$@"
+	beginrequest ${extension[opcode]} $opcode $length "$@"
 }
 
 send_rr_query_version() {
@@ -2102,7 +2132,6 @@ send_rr_query_version() {
 
 read_rr_query_version() {
 	#local unused=$1
-	shift
 
 	local major minor
 	local RR_MINOR_REQD=2
@@ -2118,7 +2147,7 @@ read_rr_query_version() {
 		declare_monitor
 	else
 		log 'RANDR initialized\n'
-		send_rr_get_screen_resources "$@"
+		rr_setup $major $minor
 	fi
 }
 
@@ -2127,13 +2156,12 @@ send_rr_get_screen_resources() {
 	log '> RRGetScreenResources\n'
 
 	extensionrequest $X_RANDR_NAME $X_RRGetScreenResources 2 \
-		read_rr_get_screen_resources "$@"
+		read_rr_get_screen_resources
 	write32 ${screen_0[root]}
 }
 
 read_rr_get_screen_resources() {
 	#local unused=$1
-	shift
 
 	local reply_length timestamp config_timestamp
 	local num_crtcs num_outputs num_modes modename_byte_count
@@ -2148,8 +2176,8 @@ read_rr_get_screen_resources() {
 	read16 byte_count_names
 	readpad 8
 
-	log '< RRGetScreenResources num_crtcs=%d num_outputs=%d handler=%s\n' \
-		$num_crtcs $num_outputs "$handler"
+	log '< RRGetScreenResources num_crtcs=%d num_outputs=%d\n' \
+		$num_crtcs $num_outputs
 
 	screen_0[rr_config_timestamp]=$config_timestamp
 
@@ -2158,7 +2186,7 @@ read_rr_get_screen_resources() {
 	for (( i=0 ; i<num_outputs ; i++ )); do
 		read32 output
 		log 'Outputs [%d]=%02x ' $((i+1)) $output
-		send_rr_get_output_info $output "$@"
+		send_rr_get_output_info $output
 	done
 
 	readpad $((32 * num_modes ))
@@ -2168,26 +2196,25 @@ read_rr_get_screen_resources() {
 
 send_rr_get_crtc_info() {
 	local crtc=$1
-	shift
+	local name=$2
 
-	log '> RRGetCrtcInfo ctrc=%d\n' $crtc
+	log '> RRGetCrtcInfo ctrc=%d name=%s\n' $crtc $name
 
 	extensionrequest $X_RANDR_NAME $X_RRGetCrtcInfo 3 \
-		read_rr_get_crtc_info "$@"
+		read_rr_get_crtc_info $crtc $name
 	write32 $crtc
 	write32 ${screen_0[rr_config_timestamp]}
 }
 
 read_rr_get_crtc_info() {
 	local status=$1
-	local handler=$2
+	local crtc=$2
 	local name=$3
-	shift 3
 	
 	local reply_length timestamp x y width height mode
 	local rnadr poss_randr num_outputs poss_num_outputs
 
-	log '< RRGetCrtcInfo status=%d\n' $status
+	log '< RRGetCrtcInfo crtc=%d on %s status=%d\n' $crtc $named $status
 
 	read32 reply_length
 	read32 timestamp
@@ -2209,32 +2236,30 @@ read_rr_get_crtc_info() {
 		log 'RANDR CRTC x=%d y=%d width=%d height=%d num_outputs=%d\n' \
 			$x $y $width $height $num_outputs
 
-		$handler $name $x $y $width $height "$@"
+		 declare_monitor $crtc $name $x $y $width $height
 	fi
 }
 
 send_rr_get_output_info() {
 	local output=$1
-	shift
 
 	log '> RRGetOutputInfo output=%d\n' $output
 
 	extensionrequest $X_RANDR_NAME $X_RRGetOutputInfo 3 \
-		read_rr_get_output_info "$@"
+		read_rr_get_output_info $output
 	write32 $output
 	write32 ${screen_0[rr_config_timestamp]}
 }
 
 read_rr_get_output_info() {
 	local status=$1
-	local handler=$2
-	shift 2
+	local output=$2
 
 	local reply_length timestamp crtc width_mm height_mm
 	local connection subpixel_order num_crtcs num_modes pref_modes
 	local num_clones name_length name
 
-	log '< RRGetOutputInfo status=%d handler=%s\n' $status "$handler"
+	log '< RRGetOutputInfo output=%d status=%d\n' $output $status
 
 	read32 reply_length
 	read32 timestamp
@@ -2255,13 +2280,174 @@ read_rr_get_output_info() {
 	if (( status != X_RRSetConfigSuccess )); then
 		log 'RANDR config status error: %d\n' $status
 	else
-		log 'RANDR Output %s crtc=%02x\n' \
-			$name $crtc
+		log 'RANDR Output %d (%s) crtc=%02x\n' \
+			$output $name $crtc
 
-		(( connected == X_RR_Connected && crtc )) && 
-			send_rr_get_crtc_info $crtc $handler $name "$@"
+		if (( connected == X_RR_Connected && crtc )); then
+			declare_output $output $name $crtc
+			send_rr_get_crtc_info $crtc $name
+		fi
 	fi
 }
+
+send_rr_select_input() {
+	local mask=$1
+
+	extensionrequest $X_RANDR_NAME $X_RRSelectInput 3
+	write32 ${screen_0[root]}
+	write16 $mask
+	writepad 2
+}
+
+declare_output() {
+	local output=$1
+	local name=$2
+	local crtc=$3
+
+	declare -Ag "output_$output=( \
+		name $name \
+		crtc $crtc)"
+}
+
+send_rr_get_monitors() {
+
+	extensionrequest $X_RANDR_NAME $X_RRGetMonitors 3 read_rr_get_monitors
+	write32 ${screen_0[root]}
+	write8 1
+	writepad 3
+}
+
+read_rr_get_monitors() {
+	#local unused=$1
+	local reply_length timestamp nmonitors noutputs 
+	local m name_atom primary auto ncrtcs 
+	local x y width height width_mm height_mm 
+	local c crtcs crtc name
+
+	read32 reply_length
+	read32 timestamp
+	read32 nmonitors
+	read32 noutputs
+	readpad 12
+
+	if (( timestamp <= monitor_change_timestamp )); then
+		readpad $((24 * nmonitors + 4 * noutputs))
+		return
+	fi
+	monitor_change_timestamp=$timestamp
+
+	log '< RRGetMonitors nmonitors=%d noutputs=%d\n' $nmonitors $noutputs
+	for (( m=0 ; m<nmonitors ; m++ )); do
+		read32 name_atom
+		read8 primary
+		read8 auto
+		read16 ncrtcs
+		read16 x
+		read16 y
+		read16 width
+		read16 height
+		read32 width_mm
+		read32 height_mm
+		crtcs=()
+		for (( c=0 ; c<ncrtcs ; c++ )); do
+			read32 crtc
+			crtcs+=($crtc)
+		done
+		log 'Monitor %d primary=%d auto=%d ncrtcs=%d x=%d y=%d width=%d height=%d\n' \
+			$m $primary $auto $ncrtcs $x $y $width $height
+
+		name=${xa_names[name_atom]}
+		[[ $name ]] || send_get_atom_name $name_atom
+		monitor_config $m $name_atom $primary $auto $x $y $width $height "${crtcs[@]}"
+	done
+}
+
+monitor_config() {
+	local mon=$1
+	local name_atom=$2
+	local primary=$3
+	local auto=$4
+	local x=$5
+	local y=$6
+	local width=$7
+	local height=$8
+	local changed=0
+	
+	local -n monitor=monitor_$mon
+
+	if [[ ${monitor@a} == A ]]; then
+		[[ ${monitor[settings]} == "$*" ]] && return
+		changed=1
+	else
+		declare -Ag monitor_$mon
+		declare -n monitor=monitor_$mon
+	fi
+	monitor[settings]="$*"
+	monitor[name_atom]=$name_atom
+	monitor[primary]=$primary
+	monitor[auto]=$auto
+	monitor[x]=$x
+	monitor[y]=$y
+	monitor[width]=$width
+	monitor[height]=$height
+	shift 7
+	monitor[crtcs]=$*
+
+	monitor_changed $mon $changed
+}
+
+
+
+
+
+rr_setup() {
+	#local major=$1
+	#local minor=$1
+
+	rr_register_event_handlers
+	send_rr_get_monitors
+	#send_rr_get_screen_resources  
+	send_rr_select_input $rr_events
+}
+
+rr_register_event_handlers() {
+	local -n randr=extension_$X_RANDR_NAME
+	local base=${randr[event]}
+
+	event_handlers[base + X_RRNotify]=handle_rr_notify
+}
+
+handle_rr_notify() {
+	local sub_code
+
+	read8 sub_code
+	readpad 2
+
+	case $sub_code in
+		$X_RRNotify_CrtcChange)
+			handle_rr_notify_crtc_change
+			;;
+		$X_RRNotify_OutputChange)
+			handle_rr_notify_output_change
+			;;
+		*)
+			;;
+	esac
+}
+
+handle_rr_notify_crtc_change() {
+	log '< RRNotifyCrtcChange\n'
+	readpad 28
+}
+
+handle_rr_notify_output_change() {
+	log '< RRNotifyOutputChange\n'
+	readpad 28
+}
+
+	
+
+
 
 run() {
 	cache_xa_names
@@ -2292,7 +2478,7 @@ run() {
 	#send_change_window_events $root $root_events >&${xfd}
 	#add_wmcheck_window >&${xfd}
 	
-	send_query_extension $X_RANDR_NAME send_rr_query_version declare_monitor >&${xfd}
+	send_query_extension $X_RANDR_NAME send_rr_query_version >&${xfd}
 
 	#when_idle $autostart
 	#when_idle adopt_windows $root $xfd
@@ -2336,6 +2522,8 @@ wm_border_width=1
 wm_border_active=$(( 16#005577 ))
 wm_border_inactive=$(( 16#444444 ))
 
+monitor_change_timestamp=0
+
 declare -A screens
 declare -A atoms
 declare -a idle_handlers
@@ -2362,6 +2550,8 @@ client_events=$(( $X_EnterWindowMask |
 			$X_FocusChangeMask |
 			$X_StructureNotifyMask |
 			$X_PropertyChangeMask ))
+
+rr_events=$(( $X_RRCrtcChangeNotifyMask | $X_RROutputChangeNotifyMask ))
 
 event_handlers[X_Error]=handle_error
 event_handlers[X_Reply]=handle_reply

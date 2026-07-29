@@ -33,8 +33,8 @@ print_volume() {
 			wpstat="$($stat_cmd | sed '/\*.*vol: 1.00/!'d)"
 		done
 		[[ $vol ]] || vol="$($vol_cmd)"
-		printf 'wpstat=<%s>\n' "$wpstat" >> vol.log
-		printf 'vol=<%s>\n' "$vol" >> vol.log
+		#printf 'wpstat=<%s>\n' "$wpstat" >> vol.log
+		#printf 'vol=<%s>\n' "$vol" >> vol.log
 	fi
 
 	[[ $vol =~ '[MUTED]' ]] && echo "$muted" && return
