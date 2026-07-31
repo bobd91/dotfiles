@@ -594,7 +594,7 @@ read_intern_atom() {
 			send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 2 0 0
 			;;
 		_NET_WORKAREA)
-			calculate_workarea
+			calculate_workarea ${desktop_monitor[current_desktop]}
 			;;
 		WM_PROTOCOLS)
 			property_change_handlers[XA_WM_PROTOCOLS]=wm_protocols_changed
@@ -869,7 +869,7 @@ read_adopt_windows() {
 		send_get_window_attributes $windowid
 	done
 
-	when_idle calculate_workarea
+	when_idle calculate_workarea ${desktop_monitor[current_desktop]}
 }
 
 read_get_window_attributes() {
@@ -1319,11 +1319,13 @@ layout_tiles() {
 	local desktopid=$1
 	local -n tiles=desktiles_$desktopid
 
+	local -n monitor=monitor_${desktops[desktopid]}
+
 	local num_tiles=${#tiles[@]}
-	local x=${screen_0[wa_x]}
-	local y=${screen_0[wa_y]}
-	local width=${screen_0[wa_width]}
-	local height=${screen_0[wa_height]}
+	local x=${monitor[wa_x]}
+	local y=${monitor[wa_y]}
+	local width=${monitor[wa_width]}
+	local height=${monitor[wa_height]}
 	local window w h hdiff i
 
 	log 'Laying out %d tiles\n' $num_tiles
@@ -1415,10 +1417,15 @@ layout_desktop() {
 }
 
 calculate_workarea() {
+	local monitorid=$1
+	local -n monitor=monitor_$monitorid
+	local -n struts=struts_$monitorid
+
 	local left=0 right=0 top=0 bottom=0
-	local x=0 y=0
-	local width=${screen_0[width_pixels]}
-	local height=${screen_0[height_pixels]}
+	local x=${monitor[x]}
+	local y=${monitor[y]}
+	local width=${monitor[width_pixels]}
+	local height=${monitor[height_pixels]}
 	local root=${screen_0[root]}
 	local id window strut sstrut
 	
@@ -1441,22 +1448,44 @@ calculate_workarea() {
 	(( width -= left + right ))
 	(( height -= top + bottom ))
 	
-	log 'Work Area: x=%d y=%d width=%d height=%d\n' $x $y $width $height
+	if (( monitor[wa_x] == x &&
+			monitor[wa_y] == y &&
+			monitor[wa_width] == width && 
+			monitor[wa_height] == height )); then
+		return
+	fi
 
-	screen_0[wa_x]=$x
-	screen_0[wa_y]=$y
-	screen_0[wa_width]=$width
-	screen_0[wa_height]=$height
+	log 'Work Area for Monitor %d: x=%d y=%d width=%d height=%d\n' \
+		$monitorid $x $y $width $height
 
-	send_change_property $root $X_PropModeReplace \
-		$XA_NET_WORKAREA $XA_CARDINAL 32 4 \
-		$x $y $width $height
+	monitor[wa_x]=$x
+	monitor[wa_y]=$y
+	monitor[wa_width]=$width
+	monitor[wa_height]=$height
 
-	layout_tiles $current_desktop
+	send_changed_desktop_workarea
+
+	layout_tiles $desktopid
+}
+
+send_changed_desktop_workarea() {
+	local vals=()
+	local i
+	for (( i=0 ; i<desktop_count ; i++ )); do
+		local -n monitor=monitor_${desktop_monitor[i]}
+		vals+=( monitor[wa_x] - monitor[x] \
+			monitor[wa_y] - monitor[y] \
+			monitor[wa_width] \
+			monitor[wa_height] )
+	done
+	send_change_property ${screen_0[root]} $X_PropModeReplace \
+		$XA_NET_WORKAREA $XA_CARDINAL 32 ${#vals[@]} "${vals[@]}"
 }
 
 add_strut() {
-	local windowid=$1
+	local monitorid=$1
+	local windowid=$2
+	local -n struts=struts_$monitorid
 
 	struts+=( $windowid )
 }
@@ -1563,8 +1592,9 @@ map_window() {
 	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
 		log 'Add strut %s\n' $windowid
 		window[type]=strut
-		add_strut $windowid
-		calculate_workarea
+		local monitorid=${desktop_monitors[current_desktop]}
+		add_strut $monitorid $windowid
+		calculate_workarea $monitorid
 	else
 		window[desktop]=$current_desktop
 		if [[ -z ${window[$XA_NET_WM_WINDOW_TYPE]} ]] || 
@@ -1613,13 +1643,14 @@ remove_desktop_window() {
 	local windowid=$1
 	local -n window=window_$windowid
 	local desktopid=${window[desktop]}
+	local monitorid=${desktop_monitor[desktopid]}
 	local type=${window[type]}
 
 	log 'Remove %s window %s from desktop %s\n' $type $windowid $desktopid
 
 	case $type in
-		strut)  remove_id struts $windowid 
-			calculate_workarea 
+		strut)  remove_id struts_$monitorid $windowid 
+			calculate_workarea $monitorid
 			;;
 		tile)   remove_id desktiles_$desktopid $windowid
 			layout_tiles $desktopid
@@ -2360,6 +2391,30 @@ read_rr_get_monitors() {
 		[[ $name ]] || send_get_atom_name $name_atom
 		monitor_config $m $name_atom $primary $auto $x $y $width $height "${crtcs[@]}"
 	done
+
+	local -n monitor=monitor_$m
+	while [[ ${monitor@a} == A ]]; do
+		monitor_remove $m
+		(( m++ ))
+		local -n monitor=monitor_$m
+	done
+}
+
+monitor_remove() {
+	local monitorid=$1
+	local -n monitor_$monitorid
+	local i
+
+	for (( i=0 ; i<$desktop_count ; i++ )); do
+		if (( desktop_monitor[i] == monitorid )); then
+			desktop_monitor[i]=0
+			if (( i == monitor[desktop] )); then
+				hide_desktop $i
+			fi
+		fi
+	done
+
+	unset "monitor"
 }
 
 monitor_config() {
@@ -2376,13 +2431,13 @@ monitor_config() {
 	local -n monitor=monitor_$mon
 
 	if [[ ${monitor@a} == A ]]; then
-		[[ ${monitor[settings]} == "$*" ]] && return
+		[[ ${monitor[as_string]} == "$*" ]] && return
 		changed=1
 	else
 		declare -Ag monitor_$mon
 		declare -n monitor=monitor_$mon
 	fi
-	monitor[settings]="$*"
+	monitor[as_string]=$*
 	monitor[name_atom]=$name_atom
 	monitor[primary]=$primary
 	monitor[auto]=$auto
@@ -2395,6 +2450,14 @@ monitor_config() {
 
 	monitor_changed $mon $changed
 }
+
+monitor_changed() {
+	local monitorid=$1
+	local changed=$2
+
+	#TODO
+}
+
 
 
 
@@ -2515,8 +2578,8 @@ X_NET_WM_STATE_REMOVE=0
 X_NET_WM_STATE_ADD=1
 X_NET_WM_STATE_TOGGLE=2
 
-current_desktop=0
 desktop_count=4
+monitor_count=0
 
 wm_border_width=1
 wm_border_active=$(( 16#005577 ))
