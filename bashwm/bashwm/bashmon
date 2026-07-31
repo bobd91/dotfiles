@@ -56,6 +56,18 @@ log_in_byte() {
 	raw_log ' %s' $1
 }
 
+log_array() {
+	local name=$1
+	local -n _a=$name
+	local _i
+
+	log 'Array %s\n' $name
+	for _i in ${!_a[@]}; do
+		log '%s[%s]=%s\n' $name $_i "${_a[$_i]}"
+	done
+}
+
+
 write8() {
 	local t=00
 	(( $1 )) && printf -v t '%02x' "$(( $1 & 16#FF ))"
@@ -372,6 +384,7 @@ beginrequest() {
 	write16 $req_length
 
 	if [[ $handler ]]; then
+		(( replies_pending++ ))
 		shift 4
 		local seq_no=$((sequence_number & 16#FFFF))
 		log 'Creating reply holder for seq_no %d\n' $seq_no
@@ -437,7 +450,7 @@ send_set_border_color() {
 
 send_set_window_pos() {
 	local windowid=$1
-	local -n window="window_$windowid"
+	local -n window=window_$windowid
 	local x=${2:-${window[old_x]}}
 	local y=${3:-${window[old_y]}}
 	local width=${4:-${window[old_width]}}
@@ -458,7 +471,7 @@ send_set_window_pos() {
 	window[height]=$height
 	window[border_width]=$border_width
 
-	log_window $windowid
+	log_array window_$windowid
 
 	mask=$(( X_CWX | X_CWY | X_CWWidth | X_CWHeight | X_CWBorderWidth ))
 	[[ $stacking_order ]] && (( mask |= X_CWStackMode, length++ ))
@@ -590,12 +603,6 @@ read_intern_atom() {
 		_NET_NUMBER_OF_DESKTOPS) 
 			send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 1 $desktop_count
 			;;
-		_NET_DESKTOP_VIEWPORT)
-			send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 2 0 0
-			;;
-		_NET_WORKAREA)
-			calculate_workarea ${desktop_monitor[current_desktop]}
-			;;
 		WM_PROTOCOLS)
 			property_change_handlers[XA_WM_PROTOCOLS]=wm_protocols_changed
 	esac
@@ -614,9 +621,12 @@ send_change_property() {
 	local i
 
 	shift 6
-	local prop_value=( $@ )
+	local prop_value=( "$@" )
 
 	log '> Change Property %s for window %s\n' ${ xa_name $prop_atom; } $windowid
+
+	log 'Bits=%d, Count=%d, Bytes=%d, No of Values=%d, Req_Len=%d\n' \
+		$prop_bits $prop_count $bytes ${#prop_value[@]} $req_len
 
 	if (( prop_bits%8 )); then
 		log 'Invalid format %s\n' $prop_bits
@@ -683,7 +693,7 @@ read_get_property() {
 
 	(( $length  )) || return
 
-	local -n window="window_$windowid"
+	local -n window=window_$windowid
 
 	if (( $start )); then
 		val=" ${window[$atom]}"
@@ -709,7 +719,7 @@ read_get_property() {
 		(( bytes_after -= byte_count ))
 		send_get_property $windowid $atom $atom_type $bytes_after $start
 	else
-		property_changed $windowid
+		property_changed $windowid $atom
 	fi
 }
 
@@ -890,7 +900,7 @@ read_get_window_attributes() {
 		# We do not manage input only or override redirect windows
 		# But createnotify does not tell us if input only
 		# so we may have already created 'window_xxx' array
-		[[ -v window_$windowid ]] && unset 'window_$windowid'
+		[[ -v window_$windowid ]] && unset window_$windowid
 		return
 	fi
 
@@ -918,7 +928,7 @@ read_adopt_window() {
 	window[border_width]=$border_width
 
 	log 'Adopting\n'
-	log_window $windowid
+	log_array window_$windowid
 
 	(( window[mapped] )) && pre_map $windowid adopt_window
 }
@@ -933,12 +943,12 @@ adopt_windows() {
 adopt_window() {
 	local windowid=$1
 	local root=${screen_0[root]}
-	local -n window="window_$windowid"
+	local -n window=window_$windowid
 
 	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
 		log 'Add strut %s\n' $windowid
 		window[type]=strut
-		add_strut $windowid
+		add_strut 0 $windowid
 	else
 		window[desktop]=$current_desktop
 		if [[ -z ${window[$XA_NET_WM_WINDOW_TYPE]} ]] || 
@@ -1023,7 +1033,7 @@ event_loop() {
 			# discard unwanted event data
 			readpad 31
 		fi
-		if (( ${#request_map[@]} == 0 )); then
+		if (( replies_pending == 0 )); then
 			handle_when_idle
 		fi
 
@@ -1068,6 +1078,8 @@ handle_reply() {
 	unset 'reply'
 
 	handle_after_reply $seq_no
+
+	(( replies_pending-- ))
 }
 
 handle_after_reply() {
@@ -1162,7 +1174,7 @@ handle_configure_request() {
 
 	log '> ConfigureWindow %s\n' $windowid
 
-	local -n window="window_$windowid"
+	local -n window=window_$windowid
 
 	n=$(count_bits $value_mask)
 	beginrequest $X_ConfigureWindow 0 $(( 3+n ))
@@ -1247,7 +1259,7 @@ handle_destroy_notify() {
 
 	log '< DestroyWindow %s (from %s)\n' $windowid $event
 
-	unset "window_$windowid"
+	unset window_$windowid
 }
 
 handle_button_press() {
@@ -1305,6 +1317,8 @@ add_tile() {
 	local -n tiles="desktiles_$desktopid"
 
 	tiles=( $windowid ${tiles[@]} )
+
+	log_array desktiles_$desktopid
 }
 
 add_float() {
@@ -1319,7 +1333,7 @@ layout_tiles() {
 	local desktopid=$1
 	local -n tiles=desktiles_$desktopid
 
-	local -n monitor=monitor_${desktops[desktopid]}
+	local -n monitor=monitor_${desktop_monitor[desktopid]}
 
 	local num_tiles=${#tiles[@]}
 	local x=${monitor[wa_x]}
@@ -1388,23 +1402,11 @@ handle_map_request() {
 
 	log '< MapRequest for window %s\n' $windowid
 
-	if [[ ! -v "window_$windowid"[mapped] ]]; then
+	if [[ ! -v window_$windowid[mapped] ]]; then
 		pre_map $windowid map_window
 	else
 		map_window $windowid
 	fi
-}
-
-log_window() {
-	local -n window="window_$1"
-	local k v
-
-	log '%s\n' "window $1"
-	for k in ${!window[@]}; do
-		v="${window[$k]}"
-		(( $k )) && k=${ xa_name $k; }
-		log '  [%s] = %s\n' "$k" "$v"
-	done
 }
 
 max() {
@@ -1424,15 +1426,15 @@ calculate_workarea() {
 	local left=0 right=0 top=0 bottom=0
 	local x=${monitor[x]}
 	local y=${monitor[y]}
-	local width=${monitor[width_pixels]}
-	local height=${monitor[height_pixels]}
+	local width=${monitor[width]}
+	local height=${monitor[height]}
 	local root=${screen_0[root]}
 	local id window strut sstrut
 	
 	log 'Struts: %s\n' "${struts[@]@Q}"
 
 	for id in "${struts[@]}"; do
-		log_window $id
+		log_array window_$id
 		local -n window=window_$id
 		sstrut="${window[$XA_NET_WM_STRUT_PARTIAL]}"
 		log 'Strut: %s\n' "$sstrut"
@@ -1463,21 +1465,23 @@ calculate_workarea() {
 	monitor[wa_width]=$width
 	monitor[wa_height]=$height
 
-	send_changed_desktop_workarea
+	update_workareas
 
 	layout_tiles $desktopid
 }
 
-send_changed_desktop_workarea() {
+update_workareas() {
 	local vals=()
 	local i
 	for (( i=0 ; i<desktop_count ; i++ )); do
 		local -n monitor=monitor_${desktop_monitor[i]}
-		vals+=( monitor[wa_x] - monitor[x] \
-			monitor[wa_y] - monitor[y] \
-			monitor[wa_width] \
-			monitor[wa_height] )
+		vals+=( $((monitor[wa_x] - monitor[x])) \
+			$((monitor[wa_y] - monitor[y])) \
+			${monitor[wa_width]} \
+			${monitor[wa_height]} )
 	done
+	log 'Work area values %d\n' ${#vals[@]}
+
 	send_change_property ${screen_0[root]} $X_PropModeReplace \
 		$XA_NET_WORKAREA $XA_CARDINAL 32 ${#vals[@]} "${vals[@]}"
 }
@@ -1488,6 +1492,8 @@ add_strut() {
 	local -n struts=struts_$monitorid
 
 	struts+=( $windowid )
+
+	log_array struts_$monitorid
 }
 
 setlastfocus() {
@@ -1517,13 +1523,11 @@ setfocus() {
 	else
 		send_set_input_focus $X_PointerRoot $timestamp
 	fi
-
-	focuschanged
 }
 
 focuschanged() {
 	local -n focuslist=focuslist_$current_desktop
-	local top prev
+	local top
 
 	log 'Focus Changed: focus list size = %s\n' ${#focuslist[@]}
 
@@ -1531,28 +1535,33 @@ focuschanged() {
 	
 	top=${focuslist[@]: -1}
 
-	log 'Selected top window %s\n' $top
+	set_active_window $top
+}
 
-	[[ $top ]] || return
+set_active_window() {
+	local windowid=${1:-0}
+	local active_window=${screen_0[active]}
 
-	log 'Active window %s\n' ${screen[active]}
+	[[ $windowid != $active_window ]] || return
 
-	[[ -z ${screen[active]} || ${screen_0[active]} != $top ]] || return
+	if (( active_window )); then
+		local -n window=window_$active_window
+		[[ ${window[type]} == tile ]] && 
+			send_set_border_color $active_window $wm_border_inactive
+	fi
 
-	screen_0[active]=$top
-	send_change_property ${screen_0[root]} $X_PropModeReplace \
-		$XA_NET_ACTIVE_WINDOW $XA_WINDOW 32 1 $top
+	active_window=$windowid
 
-	local -n window=window_$top
-	[[ ${window[type]} == tile ]] && 
-		send_set_border_color $top $wm_border_active
-
-	prev=${focuslist[@]: -2:1}
-	[[ $prev ]] || return
-
-	local -n window=window_$prev
-	[[ ${window[type]} == tile ]] && 
-		send_set_border_color $prev $wm_border_inactive
+	screen_0[active]=$active_window
+	if (( active_window )); then
+		local -n window=window_$active_window
+		[[ ${window[type]} == tile ]] && 
+			send_set_border_color $active_window $wm_border_active
+		send_change_property ${screen_0[root]} $X_PropModeReplace \
+			$XA_NET_ACTIVE_WINDOW $XA_WINDOW 32 1 $active_window
+	else
+		send_delete_property ${screen_0[root]} $XA_NET_ACTIVE_WINDOW
+	fi
 }
 
 focuslist_add() {
@@ -1582,7 +1591,7 @@ focuslist_remove() {
 map_window() {
 	local windowid=$1
 	local root=${screen_0[root]}
-	local -n window="window_$windowid"
+	local -n window=window_$windowid
 
 	(( ${window[mapped]} )) && return
 	window[mapped]=1
@@ -1592,7 +1601,9 @@ map_window() {
 	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
 		log 'Add strut %s\n' $windowid
 		window[type]=strut
-		local monitorid=${desktop_monitors[current_desktop]}
+		local monitorid=${desktop_monitor[current_desktop]}
+		log_array desktop_monitor
+		log 'current desktop %d, monitor %d\n' $current_desktop $monitorid
 		add_strut $monitorid $windowid
 		calculate_workarea $monitorid
 	else
@@ -1641,6 +1652,7 @@ add_desktop_window() {
 
 remove_desktop_window() {
 	local windowid=$1
+	local unmapped=$2
 	local -n window=window_$windowid
 	local desktopid=${window[desktop]}
 	local monitorid=${desktop_monitor[desktopid]}
@@ -1658,14 +1670,15 @@ remove_desktop_window() {
 		floats) remove_id deskfloats_$desktopid $windowid;;
 	esac
 
-	clientlist_remove $windowid
-
 	if (( window[input] )); then
 		focuslist_remove $windowid
 		setlastfocus
 	fi
 
-	window[mapped]=0
+	if (( unmapped )); then
+		clientlist_remove $windowid
+		window[mapped]=0
+	fi
 	unset 'window[desktop]'
 }
 
@@ -1689,8 +1702,7 @@ unmap_window() {
 
 	(( ${window[mapped]} )) || return
 
-	remove_desktop_window $windowid
-
+	remove_desktop_window $windowid 1
 }
 
 clientlist_add() {
@@ -1765,17 +1777,12 @@ handle_focus_in() {
 
 	local -n window=window_$windowid
 
-	(( windows[mapped] )) || return
+	(( window[mapped] )) || return
 
 	log '< FocusIn for window %s\n' $windowid
 
 	focuslist_add $windowid
 	focuschanged
-}
-
-handle_focus_out() {
-
-	readpad 31
 }
 
 change_window_state() {
@@ -1784,7 +1791,7 @@ change_window_state() {
 	local action=${3:-$X_NET_WM_STATE_TOGGLE}
 	local is_present if_present if_absent
 
-	local -n window="window_$windowid"
+	local -n window=window_$windowid
 	local state=${window[state]}
 
 	log 'Change window %s state from (%s) with property %s, action %s\n' \
@@ -1823,15 +1830,16 @@ update_fullscreen() {
 	local is_fullscreen
 	local want_fullscreen=0
 	local fs_prop=$XA_NET_WM_STATE_FULLSCREEN
-	local -n window="window_$windowid"
+	local -n window=window_$windowid
 
 	is_fullscreen=$(( ${window[fullscreen]} ))
 	[[ ${window[state]} =~ " $fs_prop " ]] && want_fullscreen=1
 
 	if (( ! is_fullscreen && want_fullscreen )); then
+		local -n monitor=monitor_${desktop_monitor[window[desktop]]}
 		send_set_window_pos $windowid \
-			0 0 \
-			${screen_0[width_pixels]} ${screen_0[height_pixels]} \
+			${monitor[x]} ${monitor[y]} \
+			${monitor[width]} ${monitor[height]} \
 			0 $X_Above
 		window[fullscreen]=1
 	elif (( is_fullscreen && ! want_fullscreen )); then
@@ -1897,17 +1905,35 @@ intern_atoms() {
 }
 
 select_desktop() {
-	local desktop=$1
-	local root=${screen_0[root]}
+	local desktopid=$1
 
-	[[ $current_desktop != $desktop ]] || return
+	log 'Selecting desktop %d, current %d\n' $desktopid $current_desktop
 
-	hide_desktop $current_desktop
-	current_desktop=$desktop
-	show_desktop $current_desktop
+	(( current_desktop != desktopid )) || return
 
-	send_change_property $root $X_PropModeReplace \
-		$XA_NET_CURRENT_DESKTOP $XA_CARDINAL 32 1 $desktop
+	local current_monitor=${desktop_monitor[current_desktop]}
+	local monitorid=${desktop_monitor[desktopid]}
+
+	log 'Selecting monitor %d, current %d\n' $monitorid $current_monitor
+
+	local -n monitor=monitor_$monitorid
+
+	if (( current_monitor != monitorid )); then
+		unfocus_desktop $current_desktop
+		current_desktop=monitor[desktop]
+	fi
+
+	if (( current_desktop == desktopid )); then
+		focus_desktop $current_desktop
+	else
+		hide_desktop $current_desktop
+		current_desktop=$desktopid
+		show_desktop $current_desktop
+		monitor[desktop]=$current_desktop
+	fi
+
+	send_change_property ${screen_0[root]} $X_PropModeReplace \
+		$XA_NET_CURRENT_DESKTOP $XA_CARDINAL 32 1 $desktopid
 }
 
 hide_desktop() {
@@ -1923,8 +1949,8 @@ hide_desktop() {
 		local -n window=window_$id
 		window[mapped]=0
 		send_unmap_window $id
+		remove_id clientlist $id
 	done
-	clientlist=( ${struts[@]} )
 	send_clientlist_update
 }
 
@@ -1951,7 +1977,14 @@ show_desktop() {
 move_to_desktop() {
 	local desktopid=$1
 
-	(( desktopid != $current_desktop )) || return
+	log 'Move window to desktop %d, current %d\n' $desktopid $current_desktop
+
+	(( current_desktop != desktopid )) || return
+
+	local current_monitor=${desktop_monitor[current_desktop]}
+	local monitorid=${desktop_monitor[desktopid]}
+
+	log 'New monitor %d, current %d\n' $monitorid $current_monitor
 
 	local windowid=${screen_0[active]}
 
@@ -1959,10 +1992,15 @@ move_to_desktop() {
 
 	local -n window=window_$windowid
 
-	[[ ${window[type]} =~ tile|float ]] || return
+	[[ ${window[desktop]} == $current_desktop && 
+		${window[type]} =~ tile|float ]] || return
 
-	send_unmap_window $windowid
-	remove_desktop_window $windowid
+	if (( current_monitor == monitorid )); then	
+		send_unmap_window $windowid
+		remove_desktop_window $windowid 1
+	else
+		remove_desktop_window $windowid 0
+	fi
 	add_desktop_window $desktopid $windowid
 }
 
@@ -2115,8 +2153,8 @@ read_get_atom_name() {
 declare_monitor() {
 	local crtc=${1:-0}
 	local name=${2:-Primary}
-	local x=${3:-${screen_0[x]}}
-	local y=${4:-${screen_0[y]}}
+	local x=${3:-0}
+	local y=${4:-0}
 	local width=${5:-${screen_0[width]}}
 	local height=${6:-${screen_0[height]}}
 	local num=$(( monitor_count++ ))
@@ -2152,7 +2190,8 @@ send_rr_query_version() {
 
 	if (( $present == 0 )); then
 		log 'No RANDR extension, using entire screen\n'
-		declare_monitor
+		monitor_config
+		update_viewports
 	else
 		extensionrequest $X_RANDR_NAME $X_RRQueryVersion 3 \
 			read_rr_query_version "$@"
@@ -2173,151 +2212,13 @@ read_rr_query_version() {
 	readpad 16
 
 	if (( major < X_RANDR_MAJOR || (major == X_RANDR_MAJOR && minor < RR_MINOR_REQD) )); then
-		log 'RANDR incompatible version (%d.%d), using entire screen\n' \
+		log 'RANDR incompatible version (%d.%d), using single monitor\n' \
 			$major $minor
-		declare_monitor
+		monitor_config
+		update_viewports
 	else
 		log 'RANDR initialized\n'
 		rr_setup $major $minor
-	fi
-}
-
-send_rr_get_screen_resources() {
-
-	log '> RRGetScreenResources\n'
-
-	extensionrequest $X_RANDR_NAME $X_RRGetScreenResources 2 \
-		read_rr_get_screen_resources
-	write32 ${screen_0[root]}
-}
-
-read_rr_get_screen_resources() {
-	#local unused=$1
-
-	local reply_length timestamp config_timestamp
-	local num_crtcs num_outputs num_modes modename_byte_count
-	local i crtcs outputs crtc output
-
-	read32 reply_length
-	read32 timestamp
-	read32 config_timestamp
-	read16 num_crtcs
-	read16 num_outputs
-	read16 num_modes
-	read16 byte_count_names
-	readpad 8
-
-	log '< RRGetScreenResources num_crtcs=%d num_outputs=%d\n' \
-		$num_crtcs $num_outputs
-
-	screen_0[rr_config_timestamp]=$config_timestamp
-
-	readpad $((4 * num_crtcs))
-
-	for (( i=0 ; i<num_outputs ; i++ )); do
-		read32 output
-		log 'Outputs [%d]=%02x ' $((i+1)) $output
-		send_rr_get_output_info $output
-	done
-
-	readpad $((32 * num_modes ))
-	readpad $byte_count_names
-	readpad4 $byte_count_names
-}
-
-send_rr_get_crtc_info() {
-	local crtc=$1
-	local name=$2
-
-	log '> RRGetCrtcInfo ctrc=%d name=%s\n' $crtc $name
-
-	extensionrequest $X_RANDR_NAME $X_RRGetCrtcInfo 3 \
-		read_rr_get_crtc_info $crtc $name
-	write32 $crtc
-	write32 ${screen_0[rr_config_timestamp]}
-}
-
-read_rr_get_crtc_info() {
-	local status=$1
-	local crtc=$2
-	local name=$3
-	
-	local reply_length timestamp x y width height mode
-	local rnadr poss_randr num_outputs poss_num_outputs
-
-	log '< RRGetCrtcInfo crtc=%d on %s status=%d\n' $crtc $named $status
-
-	read32 reply_length
-	read32 timestamp
-	read16 x
-	read16 y
-	read16 width
-	read16 height
-	read32 mode
-	read16 randr
-	read16 poss_randrs
-	read16 num_outputs
-	read16 poss_num_outputs
-	readpad $((4 * num_outputs))
-	readpad $((4 * poss_num_outputs))
-
-	if (( status != X_RRSetConfigSuccess )); then
-		log 'RANDR config status error: %d\n' $status
-	else
-		log 'RANDR CRTC x=%d y=%d width=%d height=%d num_outputs=%d\n' \
-			$x $y $width $height $num_outputs
-
-		 declare_monitor $crtc $name $x $y $width $height
-	fi
-}
-
-send_rr_get_output_info() {
-	local output=$1
-
-	log '> RRGetOutputInfo output=%d\n' $output
-
-	extensionrequest $X_RANDR_NAME $X_RRGetOutputInfo 3 \
-		read_rr_get_output_info $output
-	write32 $output
-	write32 ${screen_0[rr_config_timestamp]}
-}
-
-read_rr_get_output_info() {
-	local status=$1
-	local output=$2
-
-	local reply_length timestamp crtc width_mm height_mm
-	local connection subpixel_order num_crtcs num_modes pref_modes
-	local num_clones name_length name
-
-	log '< RRGetOutputInfo output=%d status=%d\n' $output $status
-
-	read32 reply_length
-	read32 timestamp
-	read32 crtc
-	read32 width_mm
-	read32 height_mm
-	read8 connection
-	read8 subpixel_order
-	read16 num_crtcs
-	read16 num_modes
-	read16 pref_modes
-	read16 num_clones
-	read16 name_length
-	readpad $((4 * (num_crtcs + num_modes + num_clones)))
-	readutf8 $name_length name
-	readpad4 $name_length
-
-	if (( status != X_RRSetConfigSuccess )); then
-		log 'RANDR config status error: %d\n' $status
-	else
-		log 'RANDR Output %d (%s) crtc=%02x\n' \
-			$output $name $crtc
-
-		if (( connected == X_RR_Connected && crtc )); then
-			declare_output $output $name $crtc
-			send_rr_get_crtc_info $crtc $name
-		fi
 	fi
 }
 
@@ -2328,16 +2229,6 @@ send_rr_select_input() {
 	write32 ${screen_0[root]}
 	write16 $mask
 	writepad 2
-}
-
-declare_output() {
-	local output=$1
-	local name=$2
-	local crtc=$3
-
-	declare -Ag "output_$output=( \
-		name $name \
-		crtc $crtc)"
 }
 
 send_rr_get_monitors() {
@@ -2361,13 +2252,15 @@ read_rr_get_monitors() {
 	read32 noutputs
 	readpad 12
 
+	log '< RRGetMonitors timestamp %s, last change at %s' $timestamp ${last_change_timestamp:-0}
+
 	if (( timestamp <= monitor_change_timestamp )); then
 		readpad $((24 * nmonitors + 4 * noutputs))
 		return
 	fi
 	monitor_change_timestamp=$timestamp
 
-	log '< RRGetMonitors nmonitors=%d noutputs=%d\n' $nmonitors $noutputs
+	log 'Monitors nmonitors=%d noutputs=%d\n' $nmonitors $noutputs
 	for (( m=0 ; m<nmonitors ; m++ )); do
 		read32 name_atom
 		read8 primary
@@ -2398,6 +2291,20 @@ read_rr_get_monitors() {
 		(( m++ ))
 		local -n monitor=monitor_$m
 	done
+
+	update_viewports
+}
+
+update_viewports() {
+	local i
+	local vals=()
+
+	for (( i=0 ; i<desktop_count ; i++ )); do
+		local -n monitor=monitor_${desktop_monitor[i]}
+		vals+=( ${monitor[x]} ${monitor[y]} )
+	done
+	send_change_property ${screen_0[root]} $X_PropModeReplace \
+		$XA_NET_VIEWPORT $XA_CARDINAL 32 ${#vals[@]} "${vals[@]}"
 }
 
 monitor_remove() {
@@ -2414,30 +2321,35 @@ monitor_remove() {
 		fi
 	done
 
-	unset "monitor"
+	unset 'monitor'
+	unset "struts_$monitorid"
 }
 
 monitor_config() {
-	local mon=$1
-	local name_atom=$2
-	local primary=$3
-	local auto=$4
-	local x=$5
-	local y=$6
-	local width=$7
-	local height=$8
+	local monitorid=${1:0}
+	local name_atom=${2:0}
+	local primary=${3:-1}
+	local auto=${4:-1}
+	local x=${5:-0}
+	local y=${6:-0}
+	local width=${7:-${screen_0[width_pixels]}}
+	local height=${8:-${screen_0[height_pixels]}}
+	local as_string=$*
+	shift 8
 	local changed=0
 	
-	local -n monitor=monitor_$mon
+	local -n monitor=monitor_$monitorid
 
 	if [[ ${monitor@a} == A ]]; then
-		[[ ${monitor[as_string]} == "$*" ]] && return
+		[[ ${monitor[as_string]} == "$as_string" ]] && return
 		changed=1
 	else
-		declare -Ag monitor_$mon
-		declare -n monitor=monitor_$mon
+		declare -Ag monitor_$monitorid
+		local -n monitor=monitor_$monitorid
+		declare -ag struts_$monitorid
+		(( $monitorid == 0 )) && monitor[desktop]=0
 	fi
-	monitor[as_string]=$*
+	monitor[as_string]=$as_string
 	monitor[name_atom]=$name_atom
 	monitor[primary]=$primary
 	monitor[auto]=$auto
@@ -2445,17 +2357,16 @@ monitor_config() {
 	monitor[y]=$y
 	monitor[width]=$width
 	monitor[height]=$height
-	shift 7
 	monitor[crtcs]=$*
 
-	monitor_changed $mon $changed
+	monitor_changed $monitorid $changed
 }
 
 monitor_changed() {
 	local monitorid=$1
 	local changed=$2
 
-	#TODO
+	log_array monitor_$monitorid
 }
 
 
@@ -2469,7 +2380,6 @@ rr_setup() {
 
 	rr_register_event_handlers
 	send_rr_get_monitors
-	#send_rr_get_screen_resources  
 	send_rr_select_input $rr_events
 }
 
@@ -2509,10 +2419,17 @@ handle_rr_notify_output_change() {
 }
 
 	
+init_desktop_monitor() {
+	local i
+	desktop_monitor=()
 
-
+	for (( i=0 ; i<desktop_count ; i++ )); do
+		desktop_monitor+=( 0 )
+	done
+}
 
 run() {
+	init_desktop_monitor
 	cache_xa_names
 	register_property_handlers
 
@@ -2536,15 +2453,15 @@ run() {
 
 	local root=${screen_0[root]}
 
-	#intern_atoms >&${xfd}
-	#send_get_keyboard_mapping >&${xfd}
-	#send_change_window_events $root $root_events >&${xfd}
-	#add_wmcheck_window >&${xfd}
+	intern_atoms >&${xfd}
+	send_get_keyboard_mapping >&${xfd}
+	send_change_window_events $root $root_events >&${xfd}
+	add_wmcheck_window >&${xfd}
 	
 	send_query_extension $X_RANDR_NAME send_rr_query_version >&${xfd}
 
-	#when_idle $autostart
-	#when_idle adopt_windows $root $xfd
+	when_idle $autostart
+	when_idle adopt_windows $root $xfd
 
 	event_loop >&${xfd} <&${xfd}
 
@@ -2579,6 +2496,7 @@ X_NET_WM_STATE_ADD=1
 X_NET_WM_STATE_TOGGLE=2
 
 desktop_count=4
+current_desktop=0
 monitor_count=0
 
 wm_border_width=1
@@ -2586,6 +2504,7 @@ wm_border_active=$(( 16#005577 ))
 wm_border_inactive=$(( 16#444444 ))
 
 monitor_change_timestamp=0
+replies_pending=0
 
 declare -A screens
 declare -A atoms
@@ -2632,7 +2551,6 @@ event_handlers[X_ButtonRelease]=handle_button_release
 event_handlers[X_KeyPress]=handle_key_press
 event_handlers[X_MapRequest]=handle_map_request
 event_handlers[X_FocusIn]=handle_focus_in
-event_handlers[X_FocusOut]=handle_focus_out
 event_handlers[X_ClientMessage]=handle_client_message
 
 source -p ~/.config/bashwm:/etc/bashwm:/usr/share/bashwm bashwm.config
