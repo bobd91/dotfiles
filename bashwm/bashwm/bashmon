@@ -2428,6 +2428,11 @@ init_desktop_monitor() {
 	done
 }
 
+open_display() {
+	local dsp=$1
+	exec {xfd}<>/dev/tcp/127.0.0.1/$(( 6000+$dsp ))
+}
+
 run() {
 	init_desktop_monitor
 	cache_xa_names
@@ -2435,7 +2440,7 @@ run() {
 
 	readxauth < "${XAUTHORITY:-~/.Xauthority}"
 
-	exec {xfd}<>/dev/tcp/127.0.0.1/$(( 6000+$dsp ))
+	open_display $dsp
 
 	send_setup >&${xfd}
 	read_setup_leader <&${xfd}
@@ -2480,7 +2485,7 @@ dsp=${1:-${DISPLAY:1}}
 LC_CTYPE=C
  
 source -p /usr/local/share/bashwm bashwm.xvars
-source -p .:/usr/local/share/bashwm bashwm.randr
+source -p /usr/local/share/bashwm bashwm.randr
 
 bashlog=~/.cache/bashwm/bashwm.log
 
