@@ -589,6 +589,11 @@ X_SetModifierMapping=118
 X_GetModifierMapping=119
 X_NoOperation=127
 
+X_AllPlanes=$(( 16#FFFFFFFF ))
+X_XYBitmap=0
+X_XYPixmap=1
+X_ZPixmap=2
+
 XA_PRIMARY=1
 XA_SECONDARY=2
 XA_ARC=3
