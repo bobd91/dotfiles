@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# TODO: get working again after rework
+# TODO: get floats working
 
 die() {
 	log "$@"
@@ -862,7 +862,7 @@ set_wm_class() {
 	done
 
 	x_send_change_property ${screen_0['root']} $X_PropModeReplace $XA_WM_CLASS \
-		$XA_WM_CLASS 8 ${#bytes[@]} "${bytes[@]}"
+		$XA_STRING 8 ${#bytes[@]} "${bytes[@]}"
 }
 
 # Do not call to set WM_CLASS, call set_wm_class 'instance' 'class' 
@@ -1267,7 +1267,7 @@ adopt_windows() {
 }
 
 is_fixed_size() {
-	local hints=${1:-0 0 0 0 0}
+	local hints=${1:-'0 0 0 0 0'}
 
 	# hints[0] = flags
 	# hint[1 2] = minimum width height
@@ -1283,18 +1283,25 @@ is_normal_type() {
 	[[ $net_type == $XA_NET_WM_WINDOW_TYPE_NORMAL ]]
 }
 
-set_window_type() {
+window_config() {
 	local windowid=$1
 	local -n window=window_$windowid
+	local border_width=$wm_border_width
 
-	[[ ${window[type]} ]] && return
+	window['desktop']=${window['desktop']:-$current_desktop}
 
-	if [[ ${window[$XA_WM_TRANSIENT_FOR]} == 1 ]] ||
-			is_fixed_size ${window[$XA_WM_NORMAL_HINTS]} ||
-			! is_normal_type ${window[$XA_NET_WM_WINDOW_TYPE]}; then
-		window['type']=float
-	else
-		window['type']=tile
+	if [[ -z ${window['type']} ]]; then	
+		if [[ ${window[$XA_WM_TRANSIENT_FOR]} == 1 ]] ||
+				is_fixed_size ${window[$XA_WM_NORMAL_HINTS]} ||
+				! is_normal_type ${window[$XA_NET_WM_WINDOW_TYPE]}; then
+			window['type']=float
+		else
+			window['type']=tile
+		fi
+	fi
+
+	if ! is_fixed_size ${window[$XA_WM_NORMAL_HINTS]}; then
+		window['border_width']=$wm_border_width
 	fi
 }
 
@@ -1314,13 +1321,11 @@ adopt_window() {
 		list_append monitor_$monitorid struts $windowid
 		manage=0
 	else
-		desktopid=${window['desktop']:-$current_desktop}
-		window['desktop']=$desktopid
-		set_window_type $windowid
+		window_config $windowid
+		desktopid=${window['desktop']}
 		case ${window['type']} in
 			tile)
 				list_push desktop_$desktopid tiles $windowid
-				window['border_width']=$wm_border_width
 				;;
 			float)
 				list_push desktop_$desktopid floats $windowid
@@ -2379,14 +2384,12 @@ map_window() {
 		update_net_workarea
 		manage=0
 	else
-		desktopid=${window['desktop']:-$current_desktop}
-		window['desktop']=$desktopid
-		set_window_type $windowid
+		window_config $windowid
+		desktopid=${window['desktop']}
 		case ${window['type']} in
 			tile)
 				log 'Add tile %s\n' $windowid
 				list_push desktop_$desktopid tiles $windowid
-				window['border_width']=$wm_border_width
 				layout_tiles $desktopid
 				;;
 			float)
@@ -2651,14 +2654,14 @@ process_focus_in() {
 change_window_state() {
 	local windowid=$1
 	local prop=$2
-	local action=${3:-$X_NET_WM_STATE_TOGGLE}
+	local action=${3:-$X_NET_WM_StateToggle}
 	local is_present if_present if_absent
 
 	local -n window=window_$windowid
-	local state=${window['state']}
+	local state=${window['state']:-' '}
 
 	log 'Change window %s state from (%s) with property %s, action %s\n' \
-		$windowid "$state" $prop $action 
+		$windowid "$state" ${ xa_name prop; } $action 
 
 	case $action in
 		$X_NET_WM_StateRemove ) if_present=1  ;;
@@ -2668,8 +2671,8 @@ change_window_state() {
 	esac
 	
 	[[ $state =~ " $prop " ]] && is_present=1
-	(( if_present && is_present )) && state="${state/ $prop/}"
-	(( if_absent && ! is_present )) && state+=" $prop "
+	(( if_present && is_present )) && state="${state/$prop / }"
+	(( if_absent && ! is_present )) && state+="$prop "
 	
 	window['state']=$state
 
@@ -2679,10 +2682,10 @@ change_window_state() {
 update_window_state() {
 	local windowid=$1
 	local action=$2
-	local props=( $3 $4 )
+	shift 2
 	local prop
 
-	for prop in ${props[@]}; do
+	for prop in "$@"; do
 		(( prop == XA_NET_WM_STATE_FULLSCREEN )) || continue
 		change_window_state $windowid $prop $action
 	done
@@ -2695,7 +2698,7 @@ update_fullscreen() {
 	local fs_prop=$XA_NET_WM_STATE_FULLSCREEN
 	local -n window=window_$windowid
 
-	is_fullscreen=$(( ${window['fullscreen']} ))
+	is_fullscreen=$(( window['fullscreen'] ))
 	[[ ${window['state']} =~ " $fs_prop " ]] && want_fullscreen=1
 
 	if (( ! is_fullscreen && want_fullscreen )); then
@@ -2705,9 +2708,12 @@ update_fullscreen() {
 			${monitor['width']} ${monitor['height']} \
 			0 $X_Above
 		window['fullscreen']=1
+		x_send_change_property $windowid $X_PropModeReplace \
+			$XA_NET_WM_STATE $XA_ATOM 32 1 $XA_NET_WM_STATE_FULLSCREEN
 	elif (( is_fullscreen && ! want_fullscreen )); then
 		set_window_pos $windowid
 		window['fullscreen']=0
+		x_send_delete_property $windowid $XA_NET_WM_STATE
 	fi
 }
 
@@ -2740,8 +2746,8 @@ process_client_message() {
 	local atom=$2
 	shift 2
 
-	beginprocess 'ClientMessage %s %s %s [0]=%s [1]=%s ...\n' \
-			$format $windowid ${ xa_name $atom; } ${values[0]} ${values[1]}
+	beginprocess 'ClientMessage %s %s [%s]\n' \
+			$windowid ${ xa_name $atom; } "$*"
 
 	case $atom in
 	$XA_NET_CURRENT_DESKTOP) 
@@ -3453,6 +3459,178 @@ no_rr_setup() {
 	update_net_viewport
 }
 
+x_send_query_pointer() {
+	local windowid=$1
+	local handler=$2
+
+	beginrequest 'QueryPointer %s\n' $windowid 
+	setreplyhandler x_read_query_pointer $windowid $handler
+	{
+		write8 $X_QueryPointer
+		writepad 1
+		write16 2
+		write32 $windowid
+	}>&${xfd}
+}
+
+x_read_query_pointer() {
+	local same_screen=$1
+	local windowid=$2
+	local handler=$3
+
+	beginreply 'QueryPointer %s\n' $windowid
+	{
+		read32 reply_length
+		read32 root
+		read32 child
+		readi16 root_x
+		readi16 root_y
+		readi16 win_x
+		readi16 win_y
+		read16 mask
+		readpad 6
+	}<&${xfd}
+	
+	# We don't support multiple X screens, don't know what to
+	(( same_screen )) || 
+		die 'QueryPointer returned position on another X screen\n'
+	
+	$handler $windowid $root $child $root_x $root_y $win_x $win_y $mask
+}
+
+focus_here() {
+	#local windowid=$1
+	#local root=$2
+	local child=$3
+	
+	focus_window $child
+}
+
+focus_window() {
+	local windowid=$1
+
+	log 'focus_window %s\n' $windowid
+
+	is_object window_$windowid || return
+
+	local -n window=window_$windowid
+
+	case ${window['type']} in
+		tile|float)
+			focuslist_add $windowid
+			setfocus $windowid
+			;;
+		*)
+			setfocus 0
+			;;
+	esac
+}
+
+focus_pointer() {
+	x_send_query_pointer ${screen_0['root']} focus_here
+}
+
+focus_left() {
+	local active=${screen_0['active']}
+	[[ $active ]] && focus_window ${ window_to_left $active; }
+}
+
+focus_right() {
+	local active=${screen_0['active']}
+	[[ $active ]] && focus_window ${ window_to_right $active; }
+}
+
+focus_up() {
+	local active=${screen_0['active']}
+	[[ $active ]] && focus_window ${ window_above $active; }
+}
+
+focus_down() {
+	local active=${screen_0['active']}
+	[[ $active ]] && focus_window ${ window_below $active; }
+}
+
+siblings_of() {
+	local windowid=$1
+	log 'siblings_of %s\n' $windowid
+	local -n window=window_$windowid
+	is_object window || return
+	local -n desktop=desktop_$current_desktop
+
+	log '%s siblings_of %s\n' ${window['type']} $windowid
+
+	case ${window['type']} in
+		tile) echo ${desktop['tiles']} ;;
+		float) echo ${desktop['floats']} ;;
+		*) return ;;
+	esac
+}
+
+window_to_left() {
+	local windowid=$1
+
+	log 'window_to_left %s\n' $windowid
+
+	local ids=( ${ siblings_of $windowid; } )
+
+	local count=${#ids[@]}
+	log 'Sibling count=%d, siblings=[%s]' $count "${ids[*]}"
+
+	(( count > 1 && windowid != ids[0] )) || return
+	echo ${ids[0]}
+}
+
+window_to_right() {
+	local windowid=$1
+	log 'window_to_right %s\n' $windowid
+
+	local ids=( ${ siblings_of $windowid; } )
+	local count=${#ids[@]}
+	log 'Sibling count=%d, siblings=[%s]' $count "${ids[*]}"
+
+	(( count > 1 && windowid == ids[0] )) || return
+	echo ${ids[1]}
+}
+
+window_above() {
+	local windowid=$1
+	log 'window_above %s\n' $windowid
+
+	local ids=( ${ siblings_of $windowid; } )
+	local count=${#ids[@]}
+	log 'Sibling count=%d, siblings=[%s]' $count "${ids[*]}"
+
+	(( count > 2 && windowid != ids[0] && windowid != ids[1] )) || return
+	
+	local i
+	for (( i=2 ; i<count ; i++ )); do
+		(( windowid == ids[i] )) && break
+	done
+
+	echo ${ids[i - 1]}
+}
+
+window_below() {
+	local windowid=$1
+	log 'window_below %s\n' $windowid
+
+	local ids=( ${ siblings_of $windowid; } )
+	local count=${#ids[@]}
+	log 'Sibling count=%d, siblings=[%s]' $count "${ids[*]}"
+
+	(( count > 2 && windowid != ids[0] && windowid != ids[-1] )) || return
+	
+	local i
+	for (( i=1 ; i<count-1 ; i++ )); do
+		(( windowid == ids[i] )) && break
+	done
+
+	echo ${ids[i + 1]}
+}
+
+
+#######
+
 open_unixsocket() {
 	local _fd=$1
 	local _dsp=$2
@@ -3712,8 +3890,8 @@ X_WM_NormalState=0
 X_WM_WithdrawnState=1
 X_WM_IconicState=3
 
-X_WM_SIZE_PMinSize=16
-X_WM_SIZE_PMaxSize=32
+X_WM_PMinSize=16
+X_WM_PMaxSize=32
 
 X_NET_WM_StateRemove=0
 X_NET_WM_StateAdd=1
@@ -3745,9 +3923,14 @@ keysym_command_map=(
 	[XK_c]="$((X_Mod4Mask|X_ShiftMask)):delete_window"
 	[XK_d]="$((X_Mod4Mask|X_ShiftMask)):dump_all"
 	[XK_g]="$((X_Mod4Mask|X_ShiftMask)):request_get_monitors"
-	[XK_p]="$X_Mod4Mask:show_menu"
 	[XK_q]="$((X_Mod4Mask|X_ShiftMask)):wm_exit"
 	[XK_Up]="$X_Mod4Mask:swap_master"
+	[XK_h]="$X_Mod4Mask:focus_left"
+	[XK_j]="$X_Mod4Mask:focus_down"
+	[XK_k]="$X_Mod4Mask:focus_up"
+	[XK_l]="$X_Mod4Mask:focus_right"
+	[XK_f]="$X_Mod4Mask:focus_pointer"
+	[XK_p]="$X_Mod4Mask:show_menu"
 )
 
 root_events=$(( X_SubstructureRedirectMask | 
