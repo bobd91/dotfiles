@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 
+##########################
+# From X11 include files
+##########################
+
 X_None=0
 X_ParentRelative=1
 X_CopyFromParent=0

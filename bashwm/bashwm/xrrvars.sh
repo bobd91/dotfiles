@@ -1,3 +1,9 @@
+#!/usr/bin/env bash
+
+#####################
+# From X11 randr include files
+#####################
+
 X_RANDR_NAME="RANDR"
 X_RANDR_MAJOR=1
 X_RANDR_MINOR=6
