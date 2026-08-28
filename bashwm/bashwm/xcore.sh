@@ -195,7 +195,7 @@ x_send_get_geometry() {
 }
 
 x_send_query_tree() {
-	local handler=$2
+	local handler=$1
 
 	{
 	_x_beginrequest $X_QueryTree _x_read_query_tree "$handler"
@@ -423,8 +423,13 @@ x_send_get_keyboard_mapping() {
 # and executing any commands queued via x_when_... functions
 # Client can force exit from loop by calling x_exit <return code> 
 x_event_loop() {
-	log 'in event loop\n'
+	log 'Event Loop: begin\n'
 	while [[ -z $_x_exit_code ]]; do
+
+		# Read next reply/event and dispatch
+		log 'Event loop: process_input\n'
+		_x_process_input
+
 		# While no input to read 
 		# Process any commands to run when server has caught up
 		while ! _x_pending_input; do
@@ -439,9 +444,6 @@ x_event_loop() {
 			_x_process_queue 'idle' || 
 			break
 		done
-
-		# Read next reply/event and dispatch
-		_x_process_input
 	done
 
 	return $_x_exit_code
@@ -453,17 +455,21 @@ x_exit() {
 
 # Execute command when server has processed all requests currenly pending
 x_when_server_sync() {
-	_x_server_sync_queue+=( "$_x_server_seqno $_x_client_seqno ${@@Q}" )
+	log "When Server Sync: %s\n" "$_x_server_seqno $_x_client_seqno ${*@Q}"
+
+	_x_server_sync_queue+=( "$_x_server_seqno $_x_client_seqno ${*@Q}" )
+
+	log_array _x_server_sync_queue
 }
 
 # Execute command when client has processed all server events/replies
 x_when_sync() {
-	_x_sync_queue+=( ${@@Q} )
+	_x_sync_queue+=( ${*@Q} )
 }
 
 # Execute command when client has nothing else left to do
 x_when_idle() {
-	_x_idle_queue+=( ${@@Q} )
+	_x_idle_queue+=( ${*@Q} )
 }
 
 ########################
@@ -765,10 +771,10 @@ _x_read_get_property() {
 	read32 length
 	readpad 12
 
-	(( format==8 || format==16 || format==32 )) || 
-		die 'Get Property: invalid format %s' $format
-
 	if (( $length )); then
+		(( format==8 || format==16 || format==32 )) || 
+			die 'Get Property: invalid format %s' $format
+
 		case $atom_type in
 			$XA_STRING)
 				if (( atom == XA_WM_CLASS )); then
@@ -916,21 +922,27 @@ _x_pending_replies() {
 
 _x_process_queue() {
 	local queue_name=$1
+	log 'Process Queue %s\n' $queue_name
 	local -n queue=_x_${queue_name}_queue
 
-	local keys=${!queue[@]}
+	local keys=( "${!queue[@]}" )
 
+	log 'Process Queue: %d items (%s)\n' ${#keys[@]} "${keys[*]}"
 	(( ${#keys[@]} )) || return 1
 
 	local key=${keys[0]}
-	local -a cmd="( ${queue[key]} )"
+	log 'Process Queue: queue[%s]="%s"\n' "$key" "${queue[$key]}"
+
+	local -a cmd="( ${queue[$key]} )"
 
 	if [[ $queue_name == 'server_sync' ]]; then
 		(( cmd[0] > $_x_server_seqno || 
 				cmd[1] <= $_x_server_seqno )) || 
 				return 1
+		log 'Process Queue: Running command %s\n' "${cmd[*]}"
 		"${cmd[@]:2}"
 	else
+		log 'Process Queue: Running command %s\n' "${cmd[*]}"
 		"${cmd[@]}"
 	fi
 
@@ -1078,7 +1090,7 @@ _x_read_unmap_notify() {
 	readpad 20
 	} <&${_x_fd}
 
-	"${x_event_handlers[X_UmnapNotify]}" $windowid $event
+	"${x_event_handlers[X_UnmapNotify]}" $windowid $event
 }
 
 _x_read_map_request() {

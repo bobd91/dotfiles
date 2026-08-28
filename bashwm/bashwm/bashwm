@@ -158,7 +158,7 @@ handle_focus_in() {
 		(( window['mapped'] == W_Mapped )) &&
 		[[ ${window['type']} =~ tile|float ]] || return
 
-	beginprocess 'FocusIn %s (%s %s)' \
+	log 'FocusIn %s (%s %s)' \
 		$windowid ${focus_detail[$detail]} ${focus_mode[$mode]}
 
 	focuslist_add $windowid
@@ -485,7 +485,7 @@ update_monitors() {
 	local name m monitorid name_atom
 	local prev_monitors=" ${wm_monitors[*]} "
 	wm_monitors=()
-	unset 'screen_0['primary']'
+	unset 'x_screen_0['primary']'
 
 	log 'Update wm_monitors nmonitors=%d\n' $#
 	for m in "$@"; do
@@ -655,7 +655,7 @@ handle_key_press() {
 	local keycode=$1
 	local keymask=$2
 
-	beginprocess 'KeyPress %s' $keycode 
+	log 'KeyPress %s' $keycode 
 
 	keycode_cmd="${wm_keycode_commands[keycode]}" 
 
@@ -728,7 +728,7 @@ handle_destroy_notify() {
 
 	is_object window_$windowid || return
 
-	beginprocess 'DestroyWindow %s' $windowid
+	log 'DestroyWindow %s' $windowid
 
 	remove_window $windowid
 }
@@ -747,7 +747,7 @@ handle_unmap_notify() {
 	# We may have already handled the unmapping
 	(( window['mapped'] == $W_Mapped )) || return
 
-	beginprocess 'UnmapNotify %s' $windowid
+	log 'UnmapNotify %s' $windowid
 
 	remove_window $windowid
 }
@@ -755,7 +755,7 @@ handle_unmap_notify() {
 handle_map_request() {
 	local windowid=$1
 
-	beginprocess 'MapRequest %s' $windowid
+	log 'MapRequest %s' $windowid
 
 	# Pass on the map request if we are not managing window
 	if ! is_object window_$windowid; then
@@ -1100,7 +1100,7 @@ set_active_window() {
 
 	active_window=$windowid
 
-	screen_0['active']=$active_window
+	x_screen_0['active']=$active_window
 	if (( active_window )); then
 		local -n window=window_$active_window
 		set_border_color $active_window $wm_border_active
@@ -1465,7 +1465,7 @@ handle_client_message() {
 	local atom=$2
 	shift 2
 
-	beginprocess 'ClientMessage %s %s [%s]\n' \
+	log 'ClientMessage %s %s [%s]\n' \
 			$windowid ${ xa_name $atom; } "$*"
 
 	case $atom in
@@ -2131,7 +2131,7 @@ dump_all() {
 	local m
 
 	log 'Screen:\n'
-	log_array screen_0
+	log_array x_screen_0
 
 	log 'Desktop_Monitors: <%s>\n' "${wm_desktop_monitor[*]}"
 
@@ -2349,11 +2349,10 @@ export DISPLAY=${DISPLAY:-:${1:-0}}
 
 LC_CTYPE=C
 
-wm_require_path=/usr/share/bashwm/lib
+wm_require_path=.:/usr/share/bashwm/lib
 declare -A wm_required
 
-require xcore
-require xrandr
+require xcore xrandr
 
 declare -A wm_properties
 
