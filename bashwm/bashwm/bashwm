@@ -81,6 +81,279 @@ log_array() {
 	done
 }
 
+
+####################
+# Helpers for mapping atom names to values
+# Some atoms are defined by the core protocol so we can
+# cache their mappings early
+# Others we have to get the server to generate an id (intern_atom)
+# for an atom name and add that to the list of mappings
+####################
+
+cache_xa_names() {
+	local names=( ATOM CARDINAL COLORMAP CARDINAL INTEGER PIXMAP \
+		STRING VISUALID WINDOW WM_COMMAND WM_HINTS WM_NAME \
+		WM_NORMAL_HINTS WM_SIZE_HINTS WM_CLASS WM_TRANSIENT_FOR )
+	local name xa_id
+
+	for name in ${names[@]}; do
+		xa_id="XA_$name"
+		xa_names[${!xa_id}]=$name
+	done
+}
+
+xa_name() {
+	xa_id=$1
+	echo ${xa_names[xa_id]:-$xa_id}
+}
+
+intern_atoms() {
+	intern_atom UTF8_STRING
+	intern_atom WM_PROTOCOLS
+	intern_atom WM_TAKE_FOCUS
+	intern_atom WM_DELETE_WINDOW
+	intern_atom _NET_CURRENT_DESKTOP
+	intern_atom _NET_NUMBER_OF_DESKTOPS
+	intern_atom _NET_DESKTOP_VIEWPORT
+	intern_atom _NET_WORKAREA
+	intern_atom _NET_SUPPORTED
+	intern_atom _NET_ACTIVE_WINDOW
+	intern_atom _NET_SUPPORTING_WM_CHECK
+	intern_atom _NET_WM_NAME
+	intern_atom _NET_WM_STATE
+	intern_atom _NET_WM_STATE_FULLSCREEN
+	intern_atom _NET_WM_WINDOW_TYPE
+	intern_atom _NET_WM_WINDOW_TYPE_NORMAL
+	intern_atom _NET_WM_STRUT_PARTIAL
+	intern_atom _NET_CLIENT_LIST
+}
+
+intern_atom() {
+	local atom=$1
+
+	x_send_intern_atom $atom set_atom_value
+}
+
+
+set_atom_value() {
+	local name=$1
+	local atom=$2
+
+	local root=${x_screen_0['root']}
+	local xaname=$name
+
+	[[ ${xaname::1} == '_' ]] || xaname="_$xaname"
+	xaname="XA$xaname"
+	printf -v $xaname $atom
+	xa_names[atom]=$name
+
+	case $name in
+		_NET_CURRENT_DESKTOP) 
+			x_send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 1 $wm_current_desktop 
+			;;
+		_NET_NUMBER_OF_DESKTOPS) 
+			x_send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 1 $wm_desktop_count
+			;;
+		WM_PROTOCOLS)
+			wm_property_change_handlers[XA_WM_PROTOCOLS]=wm_protocols_changed
+	esac
+}
+
+# This is the other way round than the rest of the atom helpers
+# When we get monitor info we get an atom id but no name
+# so the monitor code asks for the name, and this is the callback
+set_atom_name() {
+	local atom=$1
+	local name=$2
+
+	xa_names[$atom]=$name
+}
+
+
+####################
+# Load XRandR extension, check version then get monitor information
+# Monitor changes trigger a ConfigureNotify event where the root
+# is both the event source and window target
+####################
+
+rr_get_monitors() {
+	x_send_query_extension $X_RANDR_NAME rr_query_version
+}
+
+rr_query_version() {
+	local name=$1
+	local present=$2
+
+	if (( present == 0 )); then
+		rr_setup_failed
+	else
+		x_send_rr_query_version rr_setup
+	fi
+}
+
+rr_setup() {
+	local status=$1
+
+	if (( status == X_RROk )); then
+		x_send_rr_get_monitors update_monitors
+	else
+		rr_setup_failed
+	fi
+}
+
+rr_setup_failed() {
+	log 'XRandR extension not present or version not supported\n'
+	log 'Using entire screen\n'
+
+	x_screen_0['primary']=0
+	wm_monitors=( 0 )
+
+	default_monitor_config
+	desktop_monitor_config
+
+	layout_monitor 0
+
+	update_net_workarea
+	update_net_viewport
+}
+
+handle_configure_notify() {
+	local windowid=$1
+	local event=$2
+
+	local root=${x_screen_0['root']}
+
+	log '< ConfigureNotify for event %s window %s\n' $event $windowid
+
+	# When xrandr changes monitor/output config root gets a ConfigureNotify
+	# We can get lots in a short period as outputs/crtcs get unconfigured 
+	# and then reconfigured 
+	# The event loop will only request the updated monitor configuration
+	# when there are no pending replies or events
+	(( event == root && windowid == root )) && request_get_monitors
+}
+
+
+####################
+# Get kayboard mapping and grab keys that we use for commands
+# Handle key press events to call those commands
+####################
+
+get_key_mappings() {
+	x_send_get_keyboard_mapping grab_command_keys
+}
+
+grab_command_keys() {
+	# key_map passed by name
+	# key_map[keycode]=keysym
+	local -n key_map=$1
+	local keycode keysym keycommands keycmds keycmd mask
+
+	for keycode in ${!key_map[@]}; do
+		keysym=${key_map[$keycode]}
+		keycommands=${wm_keysym_commands[$keysym]}
+		[[ $keycommands ]] || continue
+		wm_keycode_commands[$keycode]="$keycommands"
+		IFS=',' read -ra keycmds <<< "$keycommands" 
+		for keycmd in "${keycmds[@]}"; do
+			mask="${keycmd%:*}"
+			x_send_grab_key $keycode $mask
+		done
+	done
+}
+
+handle_key_press() {
+	local keycode=$1
+	local keymask=$2
+
+	log 'KeyPress %s' $keycode 
+
+	keycode_cmd="${wm_keycode_commands[keycode]}" 
+
+	log 'Key commands %s\n' "$keycode_cmd"
+
+	[[ $keycode_cmd ]] || return 0
+
+	IFS=',' read -ra keycmds <<< "$keycode_cmd"
+	for keycmd in "${keycmds[@]}"; do
+
+		log 'Key command %s\n' "$keycmd"
+
+		mask="${keycmd%:*}"
+
+		log 'Event Mask %s, Key Mask %s\n' "$mask" "$keymask"
+
+		(( mask == keymask )) || continue
+
+		cmd="${keycmd#*:}"
+
+		log 'Command %s\n' "$cmd"
+
+		$cmd
+		break
+	done
+}
+
+####################
+# Create and configure a special, never mapped, window 
+# for Window Manager identification 
+####################
+
+create_wmcheck_window() {
+	wmcheck_windowid=$(allocate_id)
+
+	x_send_create_window $wmcheck_windowid 0 0 1 1 0 \
+		$X_InputOnly $X_CopyFromParent $X_CopyFromParent
+}
+
+# Called by CreateNotify handler when wncheck_windowid is created
+set_wmcheck_window_props() {
+	local supported
+	local root=${x_screen_0['root']}
+
+	x_send_change_property $wmcheck_windowid $X_PropModeReplace \
+		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $wmcheck_windowid
+	x_send_change_property $wmcheck_windowid $X_PropModeReplace \
+		$XA_NET_WM_NAME $XA_UTF8_STRING 8 6 'bashwm'
+	x_send_change_property $root $X_PropModeReplace \
+		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $wmcheck_windowid
+	x_send_delete_property $root $XA_NET_CLIENT_LIST
+
+	supported=( $XA_NET_CURRENT_DESKTOP $XA_NET_NUMBER_OF_DESKTOPS \
+		$XA_NET_ACTIVE_WINDOW $XA_NET_SUPPORTED \
+		$XA_NET_WM_STATE $XA_NET_SUPPORTING_WM_CHECK \
+		$XA_NET_WM_STATE_FULLSCREEN $XA_NET_WM_WINDOW_TYPE \
+		$XA_NET_WM_WINDOW_TYPE_DOCK $XA_NET_WM_WINDOW_TYPE_NORMAL \
+		$XA_NET_CLIENT_LIST )
+
+	x_send_change_property $root $X_PropModeReplace $XA_NET_SUPPORTED \
+		$XA_ATOM 32 ${#supported[@]} ${supported[@]}
+}
+
+
+####################
+# Adopt windows that existed before we started
+####################
+
+adopt_windows() {
+	x_send_query_tree read_adopt_windows
+}
+
+read_adopt_windows() {
+	local windowid 
+
+	(( $# )) || return
+
+	log 'Adopting %s windows\n' $#
+
+	for windowid in "$@"; do
+		log 'Checking prospective adoption of window %s\n' $windowid
+		x_send_get_window_attributes $windowid check_window_attributes
+	done
+
+	x_when_sync update_workareas
+}
+
 check_window_attributes() {
 	local windowid=$1
 	local class=$2
@@ -113,35 +386,62 @@ check_window_attributes() {
 	fi
 }
 
-set_atom_name() {
-	local atom=$1
-	local name=$2
+read_adopt_window() {
+	local windowid=$1
+	local x=$2
+	local y=$3
+	local width=$4
+	local height=$5
+	local border_width=$6
+	local -n window=window_$windowid
 
-	xa_names[$atom]=$name
+	window['x']=$x
+	window['y']=$y
+	window['width']=$width
+	window['height']=$height
+	window['border_width']=$border_width
+
+	log 'Adopted %s\n' $windowid
+
+	if (( window['mapped'] == $W_Mapped )); then
+		pre_map $windowid adopt_window
+	fi
 }
 
-grab_command_keys() {
-	# key_map passed by name
-	# key_map[keycode]=keysym
-	local -n key_map=$1
-	local keycode keysym keycommands keycmds keycmd mask
+adopt_window() {
+	local windowid=$1
+	local root=${x_screen_0['root']}
+	local -n window=window_$windowid
+	local monitorid
+	local manage=1
 
-	for keycode in ${!key_map[@]}; do
-		keysym=${key_map[$keycode]}
-		keycommands=${wm_keysym_commands[$keysym]}
-		[[ $keycommands ]] || continue
-		wm_keycode_commands[$keycode]="$keycommands"
-		IFS=',' read -ra keycmds <<< "$keycommands" 
-		for keycmd in "${keycmds[@]}"; do
-			mask="${keycmd%:*}"
-			x_send_grab_key $keycode $mask
-		done
-	done
+	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
+		log 'Add strut %s\n' $windowid
+		window['type']=strut
+		monitorid=${ window_monitor $windowid; }
+		log 'target monitor %d\n' $monitorid
+		window['monitor']=$monitorid
+		list_append monitor_$monitorid struts $windowid
+		manage=0
+	else
+		window_config $windowid
+		desktopid=${window['desktop']}
+		case ${window['type']} in
+			tile)
+				list_push desktop_$desktopid tiles $windowid
+				;;
+			float)
+				list_push desktop_$desktopid floats $windowid
+				;;
+		esac
+	fi
+
+	(( manage )) && clientlist_add $windowid
 }
 
-focus_detail=( Ancestor Virtual Inferior Nonlinear NonlinearVirtual Pointer PointerRoot None)
-focus_mode=( Normal Grab Ungrab WhileGrabbed ) 
-
+####################
+# 
+####################
 handle_focus_in() {
 	local windowid=$1
 	local detail=$2
@@ -158,8 +458,7 @@ handle_focus_in() {
 		(( window['mapped'] == W_Mapped )) &&
 		[[ ${window['type']} =~ tile|float ]] || return
 
-	log 'FocusIn %s (%s %s)' \
-		$windowid ${focus_detail[$detail]} ${focus_mode[$mode]}
+	log 'FocusIn %s (%s %s)' $windowid $detail $mode
 
 	focuslist_add $windowid
 	set_active_window $windowid
@@ -219,23 +518,6 @@ set_window_pos() {
 	
 	x_send_synthetic_configure_notify $windowid $stack_mode $x $y \
 		$width $height $border_width $sibling
-}
-
-cache_xa_names() {
-	local names=( ATOM CARDINAL COLORMAP CARDINAL INTEGER PIXMAP \
-		STRING VISUALID WINDOW WM_COMMAND WM_HINTS WM_NAME \
-		WM_NORMAL_HINTS WM_SIZE_HINTS WM_CLASS WM_TRANSIENT_FOR )
-	local name xa_id
-
-	for name in ${names[@]}; do
-		xa_id="XA_$name"
-		xa_names[${!xa_id}]=$name
-	done
-}
-
-xa_name() {
-	xa_id=$1
-	echo ${xa_names[xa_id]:-$xa_id}
 }
 
 set_wm_class() {
@@ -309,52 +591,6 @@ update_workareas() {
 	update_net_workarea
 }
 
-get_window_attributes() {
-	local windowid=$1
-
-	x_send_get_window_attributes $windowid check_window_attributes
-}
-
-read_adopt_windows() {
-	local windowid 
-
-	(( $# )) || return
-
-	log 'Adopting %s windows\n' $#
-
-	for windowid in "$@"; do
-		log 'Checking prospective adoption of window %s\n' $windowid
-		x_send_get_window_attributes $windowid check_window_attributes
-	done
-
-	x_when_sync update_workareas
-}
-
-read_adopt_window() {
-	local windowid=$1
-	local x=$2
-	local y=$3
-	local width=$4
-	local height=$5
-	local border_width=$6
-	local -n window=window_$windowid
-
-	window['x']=$x
-	window['y']=$y
-	window['width']=$width
-	window['height']=$height
-	window['border_width']=$border_width
-
-	log 'Adopted %s\n' $windowid
-
-	if (( window['mapped'] == $W_Mapped )); then
-		pre_map $windowid adopt_window
-	fi
-}
-
-adopt_windows() {
-	x_send_query_tree read_adopt_windows
-}
 
 is_fixed_size() {
 	local hints=${1:-'0 0 0 0 0'}
@@ -395,37 +631,6 @@ window_config() {
 	fi
 }
 
-adopt_window() {
-	local windowid=$1
-	local root=${x_screen_0['root']}
-	local -n window=window_$windowid
-	local monitorid
-	local manage=1
-
-	if [[ ${window[$XA_NET_WM_STRUT_PARTIAL]} ]]; then
-		log 'Add strut %s\n' $windowid
-		window['type']=strut
-		monitorid=${ window_monitor $windowid; }
-		log 'target monitor %d\n' $monitorid
-		window['monitor']=$monitorid
-		list_append monitor_$monitorid struts $windowid
-		manage=0
-	else
-		window_config $windowid
-		desktopid=${window['desktop']}
-		case ${window['type']} in
-			tile)
-				list_push desktop_$desktopid tiles $windowid
-				;;
-			float)
-				list_push desktop_$desktopid floats $windowid
-				;;
-		esac
-	fi
-
-	(( manage )) && clientlist_add $windowid
-}
-
 allocate_id() {
 	if (( last_id )); then
 		(( last_id++ ))
@@ -437,29 +642,6 @@ allocate_id() {
 	fi
 
 	echo $(( ${x_server['resource_id_base']} | last_id ))
-}
-
-set_wmcheck_window_props() {
-	local supported
-	local root=${x_screen_0['root']}
-
-	x_send_change_property $wmcheck_windowid $X_PropModeReplace \
-		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $wmcheck_windowid
-	x_send_change_property $wmcheck_windowid $X_PropModeReplace \
-		$XA_NET_WM_NAME $XA_UTF8_STRING 8 6 'bashwm'
-	x_send_change_property $root $X_PropModeReplace \
-		$XA_NET_SUPPORTING_WM_CHECK $XA_WINDOW 32 1 $wmcheck_windowid
-	x_send_delete_property $root $XA_NET_CLIENT_LIST
-
-	supported=( $XA_NET_CURRENT_DESKTOP $XA_NET_NUMBER_OF_DESKTOPS \
-		$XA_NET_ACTIVE_WINDOW $XA_NET_SUPPORTED \
-		$XA_NET_WM_STATE $XA_NET_SUPPORTING_WM_CHECK \
-		$XA_NET_WM_STATE_FULLSCREEN $XA_NET_WM_WINDOW_TYPE \
-		$XA_NET_WM_WINDOW_TYPE_DOCK $XA_NET_WM_WINDOW_TYPE_NORMAL \
-		$XA_NET_CLIENT_LIST )
-
-	x_send_change_property $root $X_PropModeReplace $XA_NET_SUPPORTED \
-		$XA_ATOM 32 ${#supported[@]} ${supported[@]}
 }
 
 request_get_monitors() {
@@ -560,22 +742,6 @@ handle_error() {
 	fi
 }
 
-handle_configure_notify() {
-	local windowid=$1
-	local event=$2
-
-	local root=${x_screen_0['root']}
-
-	log '< ConfigureNotify for event %s window %s\n' $event $windowid
-
-	# When xrandr changes monitor/output config root gets a ConfigureNotify
-	# We can get lots in a short period as outputs/crtcs get unconfigured 
-	# and then reconfigured 
-	# The event loop will only request the updated monitor configuration
-	# when there are no pending replies or events
-	(( event == root && windowid == root )) && request_get_monitors
-}
-
 handle_create_notify() {
 	local windowid=$1
 	local x=$2
@@ -649,38 +815,6 @@ handle_property_notify() {
 
 	log '< PropertyNotify for window %s, %s, state %s\n' \
 		$windowid ${ xa_name $atom; } $state
-}
-
-handle_key_press() {
-	local keycode=$1
-	local keymask=$2
-
-	log 'KeyPress %s' $keycode 
-
-	keycode_cmd="${wm_keycode_commands[keycode]}" 
-
-	log 'Key commands %s\n' "$keycode_cmd"
-
-	[[ $keycode_cmd ]] || return 0
-
-	IFS=',' read -ra keycmds <<< "$keycode_cmd"
-	for keycmd in "${keycmds[@]}"; do
-
-		log 'Key command %s\n' "$keycmd"
-
-		mask="${keycmd%:*}"
-
-		log 'Event Mask %s, Key Mask %s\n' "$mask" "$keymask"
-
-		(( mask == keymask )) || continue
-
-		cmd="${keycmd#*:}"
-
-		log 'Command %s\n' "$cmd"
-
-		$cmd
-		break
-	done
 }
 
 handle_enter_notify() {
@@ -922,9 +1056,10 @@ pre_map() {
 	get_property $windowid $XA_WM_TRANSIENT_FOR $XA_WINDOW 1
 	get_property $windowid $XA_WM_NORMAL_HINTS $XA_WM_SIZE_HINTS 18
 	get_property $windowid $XA_WM_HINTS $XA_WM_HINTS 9
-	change_window_events $windowid $wm_client_events
 
 	x_when_server_sync pre_map_customize $windowid $next_handler
+
+	change_window_events $windowid $wm_client_events
 }
 
 pre_map_customize() {
@@ -1480,57 +1615,6 @@ handle_client_message() {
 	esac
 }
 
-intern_atom() {
-	local atom=$1
-
-	x_send_intern_atom $atom set_atom_value
-}
-
-intern_atoms() {
-	intern_atom UTF8_STRING
-	intern_atom WM_PROTOCOLS
-	intern_atom WM_TAKE_FOCUS
-	intern_atom WM_DELETE_WINDOW
-	intern_atom _NET_CURRENT_DESKTOP
-	intern_atom _NET_NUMBER_OF_DESKTOPS
-	intern_atom _NET_DESKTOP_VIEWPORT
-	intern_atom _NET_WORKAREA
-	intern_atom _NET_SUPPORTED
-	intern_atom _NET_ACTIVE_WINDOW
-	intern_atom _NET_SUPPORTING_WM_CHECK
-	intern_atom _NET_WM_NAME
-	intern_atom _NET_WM_STATE
-	intern_atom _NET_WM_STATE_FULLSCREEN
-	intern_atom _NET_WM_WINDOW_TYPE
-	intern_atom _NET_WM_WINDOW_TYPE_NORMAL
-	intern_atom _NET_WM_STRUT_PARTIAL
-	intern_atom _NET_CLIENT_LIST
-}
-
-set_atom_value() {
-	local name=$1
-	local atom=$2
-
-	local root=${x_screen_0['root']}
-	local xaname=$name
-
-	[[ ${xaname::1} == '_' ]] || xaname="_$xaname"
-	xaname="XA$xaname"
-	printf -v $xaname $atom
-	xa_names[atom]=$name
-
-	case $name in
-		_NET_CURRENT_DESKTOP) 
-			x_send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 1 $wm_current_desktop 
-			;;
-		_NET_NUMBER_OF_DESKTOPS) 
-			x_send_change_property $root $X_PropModeReplace $atom $XA_CARDINAL 32 1 $wm_desktop_count
-			;;
-		WM_PROTOCOLS)
-			wm_property_change_handlers[XA_WM_PROTOCOLS]=wm_protocols_changed
-	esac
-}
-
 
 
 select_desktop() {
@@ -1664,13 +1748,6 @@ change_window_events() {
 	x_send_change_window_attributes $windowid $X_CWEventMask $event_mask
 }
 
-create_wmcheck_window() {
-	wmcheck_windowid=$(allocate_id)
-
-	x_send_create_window $wmcheck_windowid 0 0 1 1 0 \
-		$X_InputOnly $X_CopyFromParent $X_CopyFromParent
-}
-
 delete_window() {
 	local windowid=${x_screen_0['active']}
 	(( $windowid )) || return
@@ -1780,8 +1857,7 @@ swap_master() {
 
 	[[ ${window[type]} == tile ]] || return
 
-	local desktopid=${window['desktop']}
-	local -n desktop=desktop_$desktopid
+	local -n desktop=desktop_$wm_current_desktop
 
 	if [[ $active == ${ list_head desktop tiles; } ]]; then
 		local master=${ list_pop desktop tiles; }
@@ -1791,7 +1867,7 @@ swap_master() {
 	else
 		list_push desktop tiles $active
 	fi
-	layout_desktop $desktopid 1
+	layout_desktop $wm_current_desktop 1
 }
 
 
@@ -1930,16 +2006,6 @@ layout_monitor() {
 	[[ $desktopid ]] && layout_desktop $desktopid
 }
 
-rr_setup() {
-	local status=$1
-
-	if (( status == X_RROk )); then
-		x_send_rr_get_monitors update_monitors
-	else
-		no_rr_setup
-	fi
-}
-
 desktop_monitor_config() {
 	local d
 	local primary=${x_screen_0['primary']}
@@ -1955,22 +2021,6 @@ desktop_monitor_config() {
 			desktop_dirty $d
 		done
 	fi
-}
-
-no_rr_setup() {
-	log 'XRandR extension not present or version not supported\n'
-	log 'Using entire screen\n'
-
-	x_screen_0['primary']=0
-	wm_monitors=( 0 )
-
-	default_monitor_config
-	desktop_monitor_config
-
-	layout_monitor 0
-
-	update_net_workarea
-	update_net_viewport
 }
 
 focus_here() {
@@ -2013,19 +2063,11 @@ move_focus() {
 	local windowid
 
 	case $window['type'] in
-		tile) windowid=${ find_tile $wm_layout $active $direction; } ;;
+		tile) windowid=${ ${wm_layout}_find_tile $active $direction; } ;;
 		float) windowid=${ find_float $active $direction; } ;;
 	esac
 
 	[[ $windowid ]] && focus_window $windowid
-}
-
-find_tile() {
-	local layout=$1
-	local windowid=$2
-	local direction=$3
-
-	${layout}_find_tile $windowid $direction
 }
 
 find_float() {
@@ -2070,7 +2112,7 @@ dynamic_find_tile() {
 	# Will only be called if window is on current desktop
 	local -n desktop=desktop_$wm_current_desktop
 
-	local ids=${desktop['tiles']}
+	local ids=( ${desktop['tiles']} )
 	local count=${#ids[@]}
 	log 'tile count=%d, tiles=[%s]' $count "${ids[*]}"
 
@@ -2101,15 +2143,83 @@ dynamic_find_tile() {
 	esac
 }
 
-move_window() {
+move_reposiiton() {
 	local active=${x_screen_0['active']}
 	[[ $active ]] || return
 	local -n window=window_$active
 	case ${window['type']} in
-		tile) move_tile $wm_layout $active $direction;;
-		float) move_float $active $direction;;
+		tile) ${wm_layout}_reposition_tile $active $direction;;
+		float) reposition_float $active $direction;;
 	esac
 }
+
+dynamic_reposition_tile() {
+	local windowid=$1
+	local direction=$2
+
+	local tile=${ dynamic_find_tile $windowid $direction; }
+
+	[[ $tile ]] || return
+
+	local window_pos= dynamic_tile_pos $windowid
+	local tile_pos=dynamic_tile_pos $tile
+
+	case $direction in
+		$W_Left)
+			dynamic_rotate_tiles 1  $window_pos $tile_pos ;;
+		$W_AntiClockwise)
+			dynamic_rotate_tiles -1 ;;
+		$W_Clockwise)
+			dynamic_rotate_tiles 1 ;;
+		*)
+			dynamic_swap_tiles $window_pos $tile_pos ;;
+	esac
+
+	layout_desktop $wm_current_desktop
+}
+
+
+
+array_index() {
+	local -n arr=$1
+	local val=$2
+	local len=${#arr[@]}
+	local i
+
+	for (( i=0 ; i<len ; i++ )); do
+		echo $i && break
+	done
+}
+
+swap_tiles() {
+	local tile1=$1
+	local tile2=$2
+
+	[[ $tile1 && $tile2 && $tile1 != $tile2 ]] || return
+
+	local -n window1=window_$tile1
+	local -n window2=window_$tile2
+
+	(( wm_current_desktop == window1['desktop'] && 
+		wm_current_desktop == window2['desktop'] )) || return
+
+	local -n desktop=desktop_$wm_current_desktop
+
+	local tiles=( ${desktop['tiles']} )
+	local i1=${ array_index tiles $tile1; }
+	local i2=${ array_index tiles $tile2; }
+
+	[[ $i1 && $i2 ]] || return
+
+	tiles[i1]=$tile2
+	tiles[i2]=$tile3
+
+	desktop['tiles']=" ${tiles[*]} "
+
+}
+
+
+
 
 
 
@@ -2319,12 +2429,10 @@ run() {
 
 	x_open_display
 
-	local root=${x_screen_0['root']}
-
-	x_send_query_extension $X_RANDR_NAME rr_query_version
+	rr_get_monitors
 	intern_atoms
-	x_send_get_keyboard_mapping grab_command_keys
-	change_window_events $root $wm_root_events
+	get_key_mappings	
+	change_window_events ${x_screen_0['root']} $wm_root_events
 	create_wmcheck_window
 
 	x_when_sync adopt_windows
@@ -2333,23 +2441,12 @@ run() {
 	x_event_loop
 }
 
-rr_query_version() {
-	local name=$1
-	local present=$2
-
-	if (( present == 0 )); then
-		rr_setup $X_RRUnsupported
-	else
-		x_send_rr_query_version rr_setup
-	fi
-}
-	
 
 export DISPLAY=${DISPLAY:-:${1:-0}}
 
 LC_CTYPE=C
 
-wm_require_path=.:/usr/share/bashwm/lib
+wm_require_path=/usr/share/bashwm/lib
 declare -A wm_required
 
 require xcore xrandr
@@ -2421,13 +2518,13 @@ x_event_handlers[X_Error]=handle_error
 
 source_config
 
-logfile=bashwm-${DISPLAY#*:}.log
-#if [[ -f $logfile ]]; then
-#	# !PURE_BASH rm
-#	mv $logfile ${logfile}.old
-#else
-#	# !PURE_BASH mkdir
-#	mkdir -p ${logfile%/*}
-#fi
+logfile=~/.cache/bashwm/bashwm-${DISPLAY#*:}.log
+if [[ -f $logfile ]]; then
+	# !PURE_BASH rm
+	mv $logfile ${logfile}.old
+else
+	# !PURE_BASH mkdir
+	mkdir -p ${logfile%/*}
+fi
 
 run &> $logfile
